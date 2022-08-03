@@ -9,8 +9,7 @@ from glumpy import app
 from glumpy.app import clock
 from glumpy_display import setup, window_on_draw
 from slm_display import SLMdisplay
-from make_slm_image_2d import make_slm1_rgb, make_slm2_rgb,\
-                              make_dmd_image, make_dmd_batch, update_params
+from make_slm_images import make_slm1_rgb, make_slm2_rgb, make_dmd_image, update_params
 
 mempool = cp.get_default_memory_pool()
 pinned_mempool = cp.get_default_pinned_memory_pool()
@@ -36,21 +35,17 @@ class CaptureProcess(pylon.ImageEventHandler):
 
 class Controller:
 
-    def __init__(self,  n, m, batch_size, num_frames, scale_guess, ref_guess,
-                 R1_ampl, R2_ampl, label_ampl):
+    def __init__(self,  n, m, k, batch_size, num_frames, scale_guess, ref_guess):
 
         self.n = n
         self.m = m
+        self.k = k
 
         self.batch_size = batch_size
         self.num_frames = num_frames
 
         self.scale_guess = scale_guess
         self.ref_guess = ref_guess
-
-        self.R1_ampl = R1_ampl
-        self.R2_ampl = R2_ampl
-        self.label_ampl = label_ampl
 
         #######
         # SLM #
@@ -59,16 +54,24 @@ class Controller:
         self.y_centers = np.load('./tools/y_centers_list.npy')
         self.x_edge_indxs = np.load('./tools/x_edge_indxs.npy')
 
-        self.dmd_block_w = update_params(self.n, self.m, self.batch_size, self.num_frames)
+        self.y_centers2 = np.load('./tools/y_centers_list2.npy')
+        self.x_edge_indxs2 = np.load('./tools/x_edge_indxs2.npy')
 
-        actual_uppers_arr_256 = np.load("C:/Users/spall/OneDrive - Nexus365/Code/JS/PycharmProjects/"
-                                        "ONN/tools/actual_uppers_arr_256.npy")
-        self.uppers1_nm = actual_uppers_arr_256[-1, ...].copy()
-        self.gpu_actual_uppers_arr = cp.asarray(actual_uppers_arr_256)
+        self.y_centers3 = np.load('./tools/y_centers_list_back.npy')
+        self.x_edge_indxs3 = np.load('./tools/x_edge_indxs_back.npy')
 
-        self.slm = SLMdisplay(-1920-2560, 1920, 1080, 'SLM 1',
-                              2560, 1920, 1152, 'SLM 2',
-                              True)
+        self.dmd_block_w, self.dmd_err_block_w = update_params(self.n, self.m, self.k)
+
+        ampl_lut_slm1 = np.load("./tools/ampl_lut.npy")
+        self.gpu_ampl_lut_slm1 = cp.array(ampl_lut_slm1, dtype=cp.float16)
+        ampl_lut_slm2 = np.load("./tools/ampl_lut_2.npy")
+        self.gpu_ampl_lut_slm2 = cp.array(ampl_lut_slm2, dtype=cp.float16)
+
+        self.slm = SLMdisplay([-1920-2560, (-3*1920)-2560],
+                              [1920, 1920],
+                              [1080, 1152],
+                              ['SLM1', 'SLM2'],
+                              isImageLock=False)
 
         #######
         # DMD #
@@ -90,12 +93,12 @@ class Controller:
 
         self.screen, self.cuda_buffer, self.context = setup(1920, 1080)
 
-        self.null_frame = make_dmd_image(np.zeros((self.n, self.m)), 0., 0., 0.)
+        self.null_frame = make_dmd_image(np.zeros((self.n, self.m)), np.zeros((2*self.k, self.m)))
         self.null_frames = [self.null_frame for _ in range(10)]
 
-        ###########
-        # CAMERAS #
-        ###########
+        #################
+        # PYLON CAMERAS #
+        #################
 
         tlfactory = pylon.TlFactory.GetInstance()
         devices = tlfactory.EnumerateDevices()
@@ -127,6 +130,15 @@ class Controller:
         self.cameras.StartGrabbing(pylon.GrabStrategy_OneByOne, pylon.GrabLoop_ProvidedByInstantCamera)
         time.sleep(1)
 
+        ###############
+        # UEYE CAMERA #
+        ###############
+
+
+
+
+        ###############
+
         self.target_frames = None
         self.fc = None
         self.cp_arr = None
@@ -134,13 +146,18 @@ class Controller:
 
         self.frames1 = None
         self.ampls1 = None
-        self.z1s = None
+        self.a1s = None
         self.norm_params1 = None
 
         self.frames2 = None
         self.ampls2 = None
         self.z2s = None
         self.norm_params2 = None
+
+        self.frames3 = None
+        self.ampls3 = None
+        self.d1S = None
+        self.norm_params3 = None
 
         self.init_dmd()
 
@@ -160,12 +177,26 @@ class Controller:
             app.run(clock=self.dmd_clock, framerate=0, framecount=self.fc)
             time.sleep(0.1)
 
-    def run_batch(self, vecs_in, labels=None, normalisation=False):
+    def make_dmd_batch(self, vecs, errs=None):
+
+        assert vecs.shape[1] == self.num_frames
+
+        if errs is None:
+            errs = cp.zeros((self.k, self.num_frames))
+
+        dmd_batch = cp.zeros((self.num_frames, 1080, 1920, 3), dtype=cp.uint8)
+        for ii in range(self.num_frames):
+            dmd_arr = vecs[:, ii][:, None].repeat(self.m, axis=1)
+            dmd_err = errs[:, ii][:, None].repeat(self.m, axis=1)
+            dmd_batch[ii, ...] = make_dmd_image(dmd_arr, dmd_err)[..., None].repeat(3, axis=-1)
+
+        return dmd_batch
+
+    def run_batch_forward(self, vecs_in, normalisation=False):
 
         t0 = time.perf_counter()
 
-        self.target_frames[2:-2, :, :, :-1] = make_dmd_batch(vecs_in, labels, self.R1_ampl, self.R2_ampl, self.label_ampl,
-                                                             self.batch_size, self.num_frames)
+        self.target_frames[2:-2, :, :, :-1] = self.make_dmd_batch(vecs_in)
 
         self.cp_arr = self.target_frames[0]
         self.frame_count = 0
@@ -194,16 +225,16 @@ class Controller:
         return success
 
     def find_spot_ampls1(self, arrs):
-        mask = arrs < 3
-        arrs -= 2
-        arrs[mask] = 0
+        # mask = arrs < 3
+        # arrs -= 2
+        # arrs[mask] = 0
 
         def spot_s(i):
             return np.s_[:, self.y_centers[i] - 2:self.y_centers[i] + 3,
                          self.x_edge_indxs[2 * i]:self.x_edge_indxs[2 * i + 1]]
 
         # spot_powers = cp.array([arrs[spot_s(i)].mean(axis=(1, 2)) for i in range(self.m + 1)])
-        spot_powers = cp.random.randint(0, 256, (240, self.m)).T
+        spot_powers = cp.random.randint(0, 256, (self.num_frames, self.m)).T
 
         spot_ampls = cp.sqrt(spot_powers)
         spot_ampls = cp.flip(spot_ampls, axis=0).T
@@ -211,8 +242,22 @@ class Controller:
         return spot_ampls.get()
 
     def find_spot_ampls2(self, arrs):
-        spot_powers = cp.random.randint(0, 256, (240, 1))
-        return spot_powers.get()
+
+        # mask = arrs < 3
+        # arrs -= 2
+        # arrs[mask] = 0
+
+        def spot_s(i):
+            return np.s_[:, self.y_centers2[i] - 2:self.y_centers2[i] + 3,
+                         self.x_edge_indxs2[2 * i]:self.x_edge_indxs2[2 * i + 1]]
+
+        # spot_powers = cp.array([arrs[spot_s(i)].mean(axis=(1, 2)) for i in range(self.m + 1)])
+        spot_powers = cp.random.randint(0, 256, (self.num_frames, self.m)).T
+
+        spot_ampls = cp.sqrt(spot_powers)
+        spot_ampls = cp.flip(spot_ampls, axis=0).T
+
+        return spot_ampls.get()
 
     def check_num_frames(self, true_size):
 
@@ -238,25 +283,33 @@ class Controller:
 
     def update_slm1(self, arr, lut):
 
+        gpu_a = cp.abs(cp.asarray(arr.copy()))
+        gpu_phi = cp.angle(cp.asarray(arr.copy()))
+
+        gpu_a = cp.flip(gpu_a, axis=1)
+        gpu_phi = cp.flip(gpu_phi, axis=1)
+
         if lut:
-            gpu_arr = cp.asarray(arr.copy())
-            map_indx = cp.argmin(cp.abs(self.gpu_actual_uppers_arr - gpu_arr), axis=0)
-            arr_out = cp.linspace(-1., 1., 256)[map_indx]
-        else:
-            arr_out = cp.asarray(arr.copy())
+            map_indx = cp.argmin(cp.abs(self.gpu_ampl_lut_slm1 - gpu_a), axis=0)
+            gpu_a = cp.linspace(0., 1., 64)[map_indx]
 
-        arr_out = np.flip(arr_out.get(), axis=1)
-
-        img = make_slm1_rgb(arr_out, R1_ampl=self.R1_ampl, R1_phase=0)
-
-        self.slm.updateArray_slm1(img)
+        img = make_slm1_rgb(gpu_a, gpu_phi)
+        self.slm.updateArray('SLM1', img.get())
 
     def update_slm2(self, arr, lut):
 
-        img = make_slm2_rgb(arr, R2_ampl=self.R2_ampl, R2_phase=0,
-                            label_ampl=self.label_ampl, label_phase=cp.pi)
+        gpu_a = cp.abs(cp.asarray(arr.copy()))
+        gpu_phi = cp.angle(cp.asarray(arr.copy()))
 
-        self.slm.updateArray_slm2(img)
+        # gpu_a = cp.flip(gpu_a, axis=1)
+        # gpu_phi = cp.flip(gpu_phi, axis=1)
+
+        if lut:
+            map_indx = cp.argmin(cp.abs(self.gpu_ampl_lut_slm2 - gpu_a), axis=0)
+            gpu_a = cp.linspace(0., 1., 32)[map_indx]
+
+        img = make_slm2_rgb(gpu_a, gpu_phi)
+        self.slm.updateArray('SLM2', img.get())
 
     def find_norm_params(self, theory1, measured1, theory2, measured2):
 

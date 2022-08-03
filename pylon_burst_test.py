@@ -19,7 +19,7 @@ class CaptureProcess(pylon.ImageEventHandler):
             # if image.max() > 8:
             self.frames.append(image)
 
-            self.frames = self.frames[-1001:]
+            # self.frames = self.frames[-1001:]
 
 
 camera = pylon.InstantCamera(pylon.TlFactory.GetInstance().CreateFirstDevice())
@@ -27,20 +27,21 @@ camera.Open()
 
 print("Using device ", camera.GetDeviceInfo().GetModelName())
 
-pylon.FeaturePersistence.Load("./tools/pylon_settings_burst.pfs", camera.GetNodeMap())
+# pylon.FeaturePersistence.Load("./tools/pylon_settings_burst.pfs", camera.GetNodeMap())
+pylon.FeaturePersistence.Load("./tools/pylon_settings_temp.pfs", camera.GetNodeMap())
 # register the background handler and start grabbing using background pylon thread
 capture = CaptureProcess()
 camera.RegisterImageEventHandler(capture, pylon.RegistrationMode_ReplaceAll, pylon.Cleanup_None)
 
 time.sleep(1)
 
-camera.AcquisitionMode.SetValue("Continuous")
-camera.TriggerSelector.SetValue("FrameBurstStart")
-camera.TriggerMode.SetValue("On")
-camera.TriggerSource.SetValue("Line1")
-camera.TriggerActivation.SetValue("RisingEdge")
-camera.AcquisitionFrameRate.SetValue(1440)
-camera.AcquisitionBurstFrameCount.SetValue(24)
+# camera.AcquisitionMode.SetValue("Continuous")
+# camera.TriggerSelector.SetValue("FrameBurstStart")
+# camera.TriggerMode.SetValue("On")
+# camera.TriggerSource.SetValue("Line1")
+# camera.TriggerActivation.SetValue("RisingEdge")
+# camera.AcquisitionFrameRate.SetValue(1440)
+# camera.AcquisitionBurstFrameCount.SetValue(24)
 # camera.AcquisitionStart()
 
 capture.frames = []
@@ -49,7 +50,7 @@ camera.StartGrabbing(pylon.GrabStrategy_OneByOne, pylon.GrabLoop_ProvidedByInsta
 
 print('hi')
 
-time.sleep(2)
+time.sleep(30)
 
 
 camera.StopGrabbing()
@@ -57,4 +58,4 @@ camera.StopGrabbing()
 
 frames = np.array(capture.frames.copy())
 
-np.save('./tools/frames_temp.npy', frames)
+np.save('./tools/frames_temp1.npy', frames)

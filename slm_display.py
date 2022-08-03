@@ -37,7 +37,11 @@ class SLMframe(wx.Frame):
         dc.DrawBitmap(self.bmp, 0, 0)
 
     def UpdateImage(self, event):
-        self.eventLock = event.eventLock
+        try:
+            self.eventLock = event.eventLock
+        except AttributeError:
+            time.sleep(1)
+            self.eventLock = event.eventLock
         self.img = event.img
         self.InitBuffer()
         self.ReleaseEventLock()
@@ -51,16 +55,12 @@ class SLMframe(wx.Frame):
 class SLMdisplay:
     """Interface for sending images to the display frame."""
 
-    def __init__(self, x0, resX, resY, name, x0_1, resX1, resY1, name1, isImageLock=True):
+    def __init__(self, x0s, resXs, resYs, names, isImageLock=True):
         self.isImageLock = isImageLock
-        self._x0 = x0
-        self._resX = resX
-        self._resY = resY
-        self._name = name
-        self._x0_1 = x0_1
-        self._resX1 = resX1
-        self._resY1 = resY1
-        self._name1 = name1
+        self._x0s = x0s
+        self._resXs = resXs
+        self._resYs = resYs
+        self._names = names
         # Create the thread in which the window app will run
         # It needs its thread to continuously refresh the window
         self.vt = videoThread(self)
@@ -87,23 +87,16 @@ class SLMdisplay:
         # Wait for the lock to be released (if isImageLock = True)
         # to be sure that the previous image has been displayed
         # before displaying the next one - it avoids skipping images
+        time.sleep(0.1)
+
         if self.isImageLock:
             event.eventLock.acquire()
 
-        # time.sleep(0.1)
         return event
 
-    def updateArray_slm1(self, array):
+    def updateArray(self, slm_name, array):
         event = self.create_update_event(array)
-        self.vt.frame1.AddPendingEvent(event)
-
-    def updateArray_slm2(self, array):
-        event = self.create_update_event(array)
-        self.vt.frame2.AddPendingEvent(event)
-
-    def updateArray_both(self, array1, array2):
-        self.updateArray_slm1(array1)
-        self.updateArray_slm2(array2)
+        self.vt.frames[slm_name].AddPendingEvent(event)
 
 
 class videoThread(threading.Thread):
@@ -116,8 +109,7 @@ class videoThread(threading.Thread):
         self.setDaemon(True)
         self.start_orig = self.start
         self.start = self.start_local
-        self.frame1 = None  # to be defined in self.run
-        self.frame2 = None
+        self.frames = {}  # to be defined in self.run
         self.lock = threading.Lock()
         self.lock.acquire()  # lock until variables are set
         if autoStart:
@@ -125,14 +117,11 @@ class videoThread(threading.Thread):
 
     def run(self):
         self.app = wx.App()
-        frame1 = SLMframe(self.parent._x0, self.parent._resX, self.parent._resY,
-                         self.parent._name)
-        frame1.Show(True)
-        frame2 = SLMframe(self.parent._x0_1, self.parent._resX1, self.parent._resY1,
-                         self.parent._name1)
-        frame2.Show(True)
-        self.frame1 = frame1
-        self.frame2 = frame2
+        for i in range(len(self.parent._x0s)):
+            frame = SLMframe(self.parent._x0s[i], self.parent._resXs[i], self.parent._resYs[i],
+                             self.parent._names[i])
+            frame.Show(True)
+            self.frames[self.parent._names[i]] = frame
         self.lock.release()
         self.app.MainLoop()
 
