@@ -22,8 +22,7 @@ def create_shared_texture(w, h, c=4,
     tex = np.zeros((h, w, c), dtype).view(gloo.Texture2D)
     tex.activate()  # force gloo to create on GPU
     tex.deactivate()
-    buffer = pycuda.gl.RegisteredImage(
-        int(tex.handle), tex.target, map_flags)
+    buffer = pycuda.gl.RegisteredImage(int(tex.handle), tex.target, map_flags)
     return tex, buffer
 
 
