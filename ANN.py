@@ -37,6 +37,67 @@ def accuracy(pred, label):
     perc = correct * 100 / pred.shape[0]
     return perc
 
+class DNN_backprop:
+
+    def __init__(self, *adam_args, w1_0, w2_0, b1_0, batch_size, num_batches, lr=0.001):
+
+        self.num_batches = num_batches
+        self.batch_size = batch_size
+        self.lr = lr
+        self.loss = []
+        ip_dim = w1_0.shape[0]
+        hl_dim = w1_0.shape[1]
+        op_dim = w2_0.shape[1]
+
+        self.xs = None
+        self.ys = None
+
+        self.w1 = w1_0
+        self.w2 = w2_0
+        self.b1 = b1_0
+
+        # parameters for ADAM
+        self.m_dw1, self.v_dw1, self.m_db1, self.v_db1, self.m_dw2, self.v_dw2, self.beta1, self.beta2 = adam_args
+        self.epsilon = 1e-8
+        self.t = 1
+
+        # vectors
+        self.a1 = None
+        self.z2 = None
+        self.a2 = None
+        self.a2_delta = None
+        self.a1_delta = None
+        self.xs = None
+
+    def update_weights(self):
+
+        dw2 = np.dot(self.a1.T, self.a2_delta)
+        dw1 = np.dot(self.xs.T, self.a1_delta)
+        db1 = self.a1_delta.copy().mean(axis=0)
+
+        adam_dw2, self.m_dw2, self.v_dw2 = self.adam_update(dw2, self.m_dw2, self.v_dw2)
+        adam_dw1, self.m_dw1, self.v_dw1 = self.adam_update(dw1, self.m_dw1, self.v_dw1)
+        adam_db1, self.m_db1, self.v_db1 = self.adam_update(db1, self.m_db1, self.v_db1)
+
+        self.w2 -= adam_dw2.T
+        self.w1 -= adam_dw1
+        self.b1 -= adam_db1
+
+        self.t += 1
+
+    def adam_update(self, dw, m_dw, v_dw):
+
+        t = self.t
+
+        m_dw = self.beta1 * m_dw + (1 - self.beta1) * dw
+        v_dw = self.beta2 * v_dw + (1 - self.beta2) * (dw ** 2)
+
+        m_dw_corr = m_dw / (1 - self.beta1 ** t)
+        v_dw_corr = v_dw / (1 - self.beta2 ** t)
+
+        adam_dw = self.lr * (m_dw_corr / (np.sqrt(v_dw_corr) + self.epsilon))
+
+        return adam_dw, m_dw, v_dw
 
 class DNN:
     def __init__(self, *adam_args, x, y, w1_0, w2_0, batch_size, num_batches, lr=0.001, nonlinear=False):
@@ -73,7 +134,7 @@ class DNN:
 
         # self.z2 /= 10000
 
-        # self.a2 = softmax(self.z2)
+        self.a2 = softmax(self.z2)
 
         # print(self.z2.min(), self.z2.max())
         # print(self.a2.min(), self.a2.max())
@@ -103,9 +164,9 @@ class DNN:
         # else:
         #     a1_delta = z1_delta
 
-        self.loss = error(self.z2, ys)
+        self.loss = error(self.a2, ys)
 
-        a2_delta = (self.z2 - ys)/self.batch_size
+        a2_delta = (self.a2 - ys)/self.batch_size
         dw2 = np.dot(self.a1.T, a2_delta)
 
         a1_delta = np.dot(a2_delta, self.w2.T)

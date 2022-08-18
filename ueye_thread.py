@@ -1,13 +1,15 @@
 import time
 import numpy as np
+import cupy as cp
 from scipy import ndimage
 from pyueye import ueye
 from threading import Thread
+import cv2
 
 
 class UeyeCamera(Thread):
 
-    def __init__(self):
+    def __init__(self, k, live):
         super().__init__()
 
         self.hCam3 = ueye.HIDS(0)  # 0: first available camera;  1-254: The camera with the specified camera ID
@@ -64,11 +66,18 @@ class UeyeCamera(Thread):
             print("is_SetFrameRate ERROR")
 
         # set exposure time
-        exposure = 10
+        exposure = 4
         nret = ueye.is_Exposure(self.hCam3, ueye.IS_EXPOSURE_CMD_SET_EXPOSURE, ueye.DOUBLE(exposure),
                                 ueye.sizeof(ueye.DOUBLE(exposure)))
         if nret != ueye.IS_SUCCESS:
             print("is_Exposure ERROR")
+
+        # set gain
+        gain = 0
+        nret = ueye.is_SetHardwareGain(self.hCam3, ueye.INT(gain), ueye.INT(gain), ueye.INT(gain), ueye.INT(gain))
+        if nret != ueye.IS_SUCCESS:
+            print("is_GAIN ERROR")
+
         # set gamma to 1
         nret = ueye.is_Gamma(self.hCam3, ueye.IS_GAMMA_CMD_SET, ueye.INT(100), ueye.sizeof(ueye.INT(100)))
         if nret != ueye.IS_SUCCESS:
@@ -110,9 +119,19 @@ class UeyeCamera(Thread):
             print("is_CaptureVideo ERROR")
 
         self.frames = []
+        self.ampls = []
         self.daemon = True
         self.t0 = time.perf_counter()
         self.t1 = time.perf_counter()
+
+        spot_indxs = np.load("C:/Users/spall/OneDrive - Nexus365/Code/JS/PycharmProjects/ONN/tools/spot_indxs2.npy")
+        self.y_center = spot_indxs[-1]
+        self.spot_indxs = spot_indxs[:-1]
+        self.k = k
+        self.area_width = self.spot_indxs.shape[0]//k
+
+        self.live = live
+
 
     def run(self):
 
@@ -130,10 +149,24 @@ class UeyeCamera(Thread):
     def process(self, data):
 
         frame = np.reshape(data, (self.fr_h, self.fr_w, 3))[..., 0].astype(np.uint8)
-        frame = ndimage.rotate(frame, -0.4, reshape=False)
-        frame = np.flip(frame, axis=0)
-        self.frames.append(frame)
+        frame = ndimage.rotate(frame, -0.2, reshape=False).T
+        mask = frame < 4
+        frame -= 3
+        frame[mask] = 0
+
+        self.frames.append(frame.T)
         self.frames = self.frames[-20:]
+
+        if self.live:
+            cv2.imshow('ueye', frame.T)
+            cv2.waitKey(5)
+
+        spots = frame[self.spot_indxs, self.y_center-2:self.y_center+3].copy()
+        powers = spots.reshape((self.k, self.area_width, 5)).mean(axis=(1, 2))
+        ampls = np.sqrt(powers)
+
+        self.ampls.append(ampls)
+        self.ampls = self.ampls[-20:]
 
         # self.t1 = time.perf_counter()
         # print(f'{self.t1 - self.t0:.4f}')

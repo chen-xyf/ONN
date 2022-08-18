@@ -75,7 +75,7 @@ dmd_y0 = dmd_yc-(dmd_h//2)
 dmd_sig_xc = dmd_w//6 - 22
 dmd_err_xc = int(5*dmd_w//6) + 30
 
-dmd_err_yc = 628
+dmd_err_yc = 614
 
 dmd_sig_w = int(slm_sig_w * dmd_w/slm_w)
 dmd_sig_h = int(slm_sig_h * dmd_h/slm_h)
@@ -173,7 +173,7 @@ gpu_gr2 = cp.asarray(gr2, dtype='float32')
 
 ######################################
 
-phi_sig_corr = np.load("./tools/phi_corr_w1_july22.npy")
+phi_sig_corr = np.load("./tools/phi_corr_w1_aug22.npy")
 gpu_phi_sig_corr = cp.array(phi_sig_corr)
 
 phi_err_corr = np.load("./tools/phi_err_w1_aug22.npy")
@@ -182,20 +182,19 @@ phi_err_corr = np.flip(phi_err_corr, axis=1)
 gpu_phi_err_corr = cp.array(phi_err_corr)
 
 uppers_err_2km = np.load("./tools/uppers_err_2km_w1_aug22.npy")
-uppers_err_2km = np.flip(uppers_err_2km, axis=1)
 
-phi_arr_corr_2 = np.load("./tools/phi_corr_2.npy")
-gpu_phi_arr_corr_2 = cp.array(phi_arr_corr_2)
+# phi_arr_corr_2 = np.load("./tools/phi_corr_2.npy")
+# gpu_phi_sig_corr_2 = cp.array(phi_arr_corr_2)
 
-uppers_w2_mk = np.load("./tools/uppers_w2_mk_aug22.npy")
+# uppers_w2_mk = np.load("./tools/uppers_w2_mk_aug22.npy")
 
-slm_R2_pos_phase_block = np.load("C:/Users/spall/OneDrive - Nexus365/Code/JS/PycharmProjects/"
-                                 "ONN/tools/slm_R2_pos_phase_block.npy")
-gpu_slm_R2_pos_phase_block = cp.array(slm_R2_pos_phase_block)
-
-slm_R2_neg_phase_block = np.load("C:/Users/spall/OneDrive - Nexus365/Code/JS/PycharmProjects/"
-                                 "ONN/tools/slm_R2_neg_phase_block.npy")
-gpu_slm_R2_neg_phase_block = cp.array(slm_R2_neg_phase_block)
+# slm_R2_pos_phase_block = np.load("C:/Users/spall/OneDrive - Nexus365/Code/JS/PycharmProjects/"
+#                                  "ONN/tools/slm_R2_pos_phase_block.npy")
+# gpu_slm_R2_pos_phase_block = cp.array(slm_R2_pos_phase_block)
+#
+# slm_R2_neg_phase_block = np.load("C:/Users/spall/OneDrive - Nexus365/Code/JS/PycharmProjects/"
+#                                  "ONN/tools/slm_R2_neg_phase_block.npy")
+# gpu_slm_R2_neg_phase_block = cp.array(slm_R2_neg_phase_block)
 
 
 slm_gap_x = 1
@@ -204,6 +203,7 @@ slm2_gap_x = 5
 slm2_gap_y = 1
 dmd_gaps = True
 
+# SLM1 error
 tilt = 22
 tilt_levels = cp.array([-(i-slm_resY_actual//2)//tilt for i in range(slm_resY_actual)])
 tilt_row_indices, tilt_column_indices = cp.ogrid[:slm_resY_actual, :slm_resX_actual//2]
@@ -216,7 +216,8 @@ tilt_vert_row_indices, tilt_vert_column_indices = cp.ogrid[slm_resX_actual // 2:
 tilt_levels[tilt_levels < 0] += slm_resY_actual
 tilt_vert_column_indices = tilt_vert_column_indices.copy() - tilt_levels[:, cp.newaxis]
 
-tilt2 = -25
+# SLM2
+tilt2 = -22
 tilt2_levels = cp.array([i//tilt2 for i in range(slm2_resY)])
 tilt2_levels[tilt2_levels < 0] += slm2_resX
 tilt2_row_indices, tilt2_column_indices = cp.ogrid[:slm2_resY, :slm2_resX]
@@ -228,6 +229,7 @@ tilt2_levels[tilt2_levels < 0] += slm2_resY
 tilt2_vert_row_indices, tilt2_vert_column_indices = cp.ogrid[:slm2_resX, :slm2_resY]
 tilt2_vert_column_indices = tilt2_vert_column_indices - tilt2_levels[:, cp.newaxis]
 
+# DMD
 tilt = -30
 tilt_levels_dmd = cp.array([ii//tilt for ii in range(dmd_h)])
 rows_indices_dmd, columns_indices_dmd = cp.ogrid[:dmd_h, :dmd_w//2]
@@ -359,13 +361,18 @@ def update_params(_n, _m, _k, _num_frames):
 
     err_phi = np.zeros((2*k, m))*0.
     err_phi[::2, :] = np.pi
+    err_phi = np.flip(err_phi, axis=0)
+    err_phi = np.flip(err_phi, axis=1)
     err_phi_aoi = np.repeat(err_phi, slm_err_block_w, axis=0)
     err_phi_aoi = np.repeat(err_phi_aoi, slm_err_block_h, axis=1)
     err_phi_aoi = np.delete(err_phi_aoi, err_cols_to_del, 0)
     err_phi_aoi = np.delete(err_phi_aoi, err_rows_to_del, 1)
 
-    err_a = np.ones((2*k, m))*1.
-    err_a *= uppers_err_2km.copy()
+    err_a = np.ones((2*k, m))*1. * uppers_err_2km.copy()
+    # err_a[0, :] = 0.1
+    # err_a[:, 1] = 0.1
+    err_a = np.flip(err_a, axis=0)
+    err_a = np.flip(err_a, axis=1)
     err_a_aoi = np.repeat(err_a, slm_err_block_w, axis=0)
     err_a_aoi = np.repeat(err_a_aoi, slm_block_h, axis=1)
     for i in range(2*k):
@@ -470,8 +477,10 @@ def make_slm1_rgb(target_a, target_phi):
 
 def make_slm2_rgb(target_a, target_phi):
 
-    gpu_a = cp.zeros((slm2_resX, slm2_resY), dtype='float32')
-    gpu_phi = cp.zeros((slm2_resX, slm2_resY), dtype='float32')
+    target_a = cp.flip(target_a, axis=0)
+    target_a = cp.flip(target_a, axis=1)
+    target_phi = cp.flip(target_phi, axis=0)
+    target_phi = cp.flip(target_phi, axis=1)
 
     a_aoi = cp.repeat(target_a, slm2_block_w, axis=0)
     a_aoi = cp.repeat(a_aoi, slm2_block_h, axis=1)
@@ -487,12 +496,14 @@ def make_slm2_rgb(target_a, target_phi):
     phi_aoi = cp.repeat(phi_aoi, slm2_block_h, axis=1)
     phi_aoi = phi_aoi[cols_to_keep2, :][:, rows_to_keep2]
 
+    gpu_a = cp.zeros((slm2_resX, slm2_resY), dtype='float32')
+    gpu_phi = cp.zeros((slm2_resX, slm2_resY), dtype='float32')
+
     gpu_a[slm2_sig_s] = a_aoi
-    gpu_phi[slm2_sig_s] = phi_aoi + gpu_phi_arr_corr_2
+    gpu_phi[slm2_sig_s] = phi_aoi #+ gpu_phi_sig_corr_2
 
     gpu_a = gpu_a[tilt2_column_indices, tilt2_row_indices].T
     gpu_phi = gpu_phi[tilt2_column_indices, tilt2_row_indices].T
-
     gpu_a = gpu_a[tilt2_vert_row_indices, tilt2_vert_column_indices]
     gpu_phi = gpu_phi[tilt2_vert_row_indices, tilt2_vert_column_indices]
 
@@ -524,6 +535,8 @@ def make_dmd_batch(vecs, errs=None):
         errs[:, ::2] *= (errs[:, ::2] < 0).astype(cp.int)
         errs[:, 1::2] *= (errs[:, 1::2] > 0).astype(cp.int)
         errs = cp.abs(errs)
+
+    errs = cp.flip(errs, axis=1)
 
     assert vecs.shape == (num_frames, n)
     assert errs.shape == (num_frames, 2*k)
@@ -564,14 +577,19 @@ def make_dmd_batch(vecs, errs=None):
     imgs[dmd_sig_s_multi] = sig_aoi
     imgs[dmd_err_s_multi] = err_aoi
 
+    # imgs_temp = imgs[:, dmd_w//2:, :, :][:, columns_indices_dmd, rows_indices_dmd, :].copy()
+    # imgs = cp.transpose(imgs, (0, 2, 1, 3))
+    # imgs[:, :, dmd_w//2:, :] = imgs_temp
+    # imgs_temp = imgs[:, :, dmd_w//2:, :][:, columns_vert_indices_dmd, rows_vert_indices_dmd, :].copy()
+    # imgs_temp = cp.transpose(imgs_temp, (0, 2, 1, 3))
+    # imgs[:, :, dmd_w//2:, :] = imgs_temp
+
     imgs_temp = imgs[:, dmd_w//2:, :, :][:, columns_indices_dmd, rows_indices_dmd, :].copy()
+    imgs_temp = imgs_temp[:, columns_vert_indices_dmd, rows_vert_indices_dmd, :].copy()
+    imgs_temp = cp.transpose(imgs_temp, (0, 2, 1, 3))
+
     imgs = cp.transpose(imgs, (0, 2, 1, 3))
     imgs[:, :, dmd_w//2:, :] = imgs_temp
-
-    imgs_temp = imgs[:, :, dmd_w//2:, :][:, columns_vert_indices_dmd, rows_vert_indices_dmd, :].copy()
-    imgs_temp = cp.transpose(imgs_temp, (0, 2, 1, 3))
-    imgs[:, :, dmd_w//2:, :] = imgs_temp
-    # imgs = cp.transpose(imgs, (0, 2, 1, 3))
 
     imgs = cp.flip(imgs, axis=1)
     imgs = cp.flip(imgs, axis=2)
