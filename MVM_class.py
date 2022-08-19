@@ -322,12 +322,12 @@ class MyMVM:
 if __name__ == "__main__":
 
     n, m, k = 3, 10, 3
-    num_frames = 10
+    num_frames = 1
     ctrl_vars = (n, m, k, num_frames)
 
     t0 = time.time()
 
-    mvm = MyMVM(num_batches=5, ctrl_vars=ctrl_vars)
+    mvm = MyMVM(num_batches=20, ctrl_vars=ctrl_vars)
     mvm.run_mvm()
     # mvm.run_phase_calib_w1()
     # mvm.run_ampl_calib_w1()

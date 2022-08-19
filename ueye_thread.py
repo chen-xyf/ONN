@@ -66,7 +66,7 @@ class UeyeCamera(Thread):
             print("is_SetFrameRate ERROR")
 
         # set exposure time
-        exposure = 4
+        exposure = 2
         nret = ueye.is_Exposure(self.hCam3, ueye.IS_EXPOSURE_CMD_SET_EXPOSURE, ueye.DOUBLE(exposure),
                                 ueye.sizeof(ueye.DOUBLE(exposure)))
         if nret != ueye.IS_SUCCESS:

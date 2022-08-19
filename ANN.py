@@ -39,27 +39,18 @@ def accuracy(pred, label):
 
 class DNN_backprop:
 
-    def __init__(self, *adam_args, w1_0, w2_0, b1_0, batch_size, num_batches, lr=0.001):
-
-        self.num_batches = num_batches
-        self.batch_size = batch_size
-        self.lr = lr
-        self.loss = []
-        ip_dim = w1_0.shape[0]
-        hl_dim = w1_0.shape[1]
-        op_dim = w2_0.shape[1]
+    def __init__(self, w1_0, w2_0, b1_0, lr, *adam_args):
 
         self.xs = None
         self.ys = None
-
-        self.w1 = w1_0
-        self.w2 = w2_0
-        self.b1 = b1_0
 
         # parameters for ADAM
         self.m_dw1, self.v_dw1, self.m_db1, self.v_db1, self.m_dw2, self.v_dw2, self.beta1, self.beta2 = adam_args
         self.epsilon = 1e-8
         self.t = 1
+
+        # parameters for onn
+        self.w1, self.w2, self.b1, self.lr = w1_0, w2_0, b1_0, lr
 
         # vectors
         self.a1 = None
@@ -98,6 +89,8 @@ class DNN_backprop:
         adam_dw = self.lr * (m_dw_corr / (np.sqrt(v_dw_corr) + self.epsilon))
 
         return adam_dw, m_dw, v_dw
+
+
 
 class DNN:
     def __init__(self, *adam_args, x, y, w1_0, w2_0, batch_size, num_batches, lr=0.001, nonlinear=False):

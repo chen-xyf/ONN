@@ -9,11 +9,13 @@ from scipy.io import loadmat
 from termcolor import colored
 from glumpy.app import clock
 from ONN_config import Controller
+from datetime import datetime
 
 
 class MyONN:
 
-    def __init__(self, lr, num_batches, num_epochs, ctrl_vars):
+    def __init__(self, num_batches, num_epochs, w1_0, w2_0, b1_0, lr, ctrl_vars, save_folder,
+                 trainx=None, testx=None, trainy=None, testy=None):
 
         self.ctrl = Controller(*ctrl_vars)
 
@@ -22,50 +24,76 @@ class MyONN:
         self.k = self.ctrl.k
         self.batch_size = self.ctrl.num_frames
         self.num_frames = self.ctrl.num_frames
-
-        self.lr = lr
         self.num_batches = num_batches
         self.num_epochs = num_epochs
         self.loop_clock = clock.Clock()
 
-        self.accs = []
-        self.loss = [0.5]
+        self.accs = [0.]
+        self.loss = []
+
         self.errors1 = []
         self.errors2 = []
         self.errors3 = []
+
         self.best_w1 = None
         self.best_w2 = None
         self.best_b1 = None
 
-        self.dnn = None
-
-        self.w1 = None
-        self.w2 = None
-        self.b1 = None
-
-        self.trainx = None
-        # self.valx = None
-        self.testx = None
-        self.trainy = None
-        # self.valy = None
-        self.testy = None
+        self.trainx = trainx
+        self.testx = testx
+        self.trainy = trainy
+        self.testy = testy
 
         self.batch_indxs_list = None
 
-    def graphs(self):
+        self.save_folder = save_folder
+
+        ##### initialise dnn parameters #####
+
+        m_dw1 = np.zeros((self.ctrl.n - 1, self.ctrl.m))
+        v_dw1 = np.zeros((self.ctrl.n - 1, self.ctrl.m))
+
+        m_db1 = np.zeros(self.ctrl.m)
+        v_db1 = np.zeros(self.ctrl.m)
+
+        m_dw2 = np.zeros((self.ctrl.m, self.ctrl.k))
+        v_dw2 = np.zeros((self.ctrl.m, self.ctrl.k))
+
+        beta1 = 0.9
+        beta2 = 0.999
+
+        adam_params = (m_dw1, v_dw1, m_db1, v_db1, m_dw2, v_dw2, beta1, beta2)
+
+        self.dnn = DNN_backprop(w1_0, w2_0, b1_0, lr, *adam_params)
 
         plt.ion()
         plt.show()
 
-        self.fig3, [[self.axs0, self.axs1, self.axs2, self.axsa],
-                    [self.axs3, self.axs4, self.axs5, self.axsb],
-                    [self.axs6, self.axs7, self.axs8, self.axsc]] = plt.subplots(3, 4, figsize=(24, 12))
+        self.fig3, [[self.axs0, self.axs1, self.axs2, self.axsa, self.axsd],
+                    [self.axs3, self.axs4, self.axs5, self.axsb, self.axse],
+                    [self.axs6, self.axs7, self.axs8, self.axsc, self.axsf]] = plt.subplots(3, 5, figsize=(24, 12))
+
+        self.axsa.set_ylim(0, 0.5)
+        self.axsa.set_title('Loss')
+        self.axsb.set_ylim(0, 100)
+        self.axsb.set_title('Accuracy')
+        self.axsc.set_ylim(0, 2)
+        self.axsc.set_title('Errors')
+
+        self.loss_plot = self.axsa.plot(self.loss, linestyle='-', marker='x', c='b')
+        self.accs_plot = self.axsb.plot(self.accs, linestyle='-', marker='', c='b')
+        self.err1_plot = self.axsc.plot(self.errors1, linestyle='-', marker='', c='r')
+        self.err2_plot = self.axsc.plot(self.errors2, linestyle='-', marker='', c='g')
+        self.err3_plot = self.axsc.plot(self.errors3, linestyle='-', marker='', c='b')
+
+        self.axsd.set_title('Test actual classes')
+        self.axsd.scatter(testx[:, 0], testx[:, 1], c=testy.argmax(axis=1))
+        self.axse.set_title('Test prediction classes')
+        self.test_scatter = self.axse.scatter(testx[:, 0], testx[:, 1])
 
         self.axs3.set_ylim(-5, 5)
         self.axs4.set_ylim(-5, 5)
         self.axs5.set_ylim(-5, 5)
-        self.axsa.set_ylim(0, 0.5)
-        self.axsb.set_ylim(0, 100)
 
         self.th_line1 = self.axs3.plot(np.zeros(self.m), linestyle='', marker='o', c='b')[0]
         self.meas_line1 = self.axs3.plot(np.zeros(self.m), linestyle='', marker='x', c='r')[0]
@@ -78,17 +106,14 @@ class MyONN:
         self.img2 = self.axs7.imshow(np.zeros((90, 808)), aspect='auto', vmin=0, vmax=255)
         self.img3 = self.axs8.imshow(np.zeros((120, 672)), aspect='auto', vmin=0, vmax=255)
 
+
+
         plt.draw()
         plt.pause(2)
 
-    def run_calibration(self, initial=True):
+        self.loop_clock.tick()
 
-        if not initial:
-            slm_arr = self.dnn.w1.copy()
-            slm2_arr = self.dnn.w2.copy()
-            self.ctrl.update_slm1(slm_arr, lut=True)
-            self.ctrl.update_slm2(slm2_arr, lut=True)
-            time.sleep(0.5)
+    def run_calibration(self, initial=True):
 
         meass_a1 = []
         theorys_a1 = []
@@ -96,6 +121,15 @@ class MyONN:
         theorys_z2 = []
         meass_back = []
         theorys_back = []
+
+        if not initial:
+            slm_arr = cp.empty((self.n, self.m))
+            slm_arr[1:, :] = cp.array(self.dnn.w1.copy())
+            slm_arr[0, :] = cp.array(self.dnn.b1.copy())
+            slm2_arr = cp.array(self.dnn.w2.copy())
+            self.ctrl.update_slm1(slm_arr, lut=True)
+            self.ctrl.update_slm2(slm2_arr, lut=True)
+            time.sleep(0.5)
 
         succeeded = 0
         while succeeded < 5:
@@ -123,7 +157,7 @@ class MyONN:
                 self.ctrl.update_slm1(slm_arr, lut=True)
                 self.ctrl.update_slm2(slm2_arr, lut=True)
 
-            time.sleep(0.5)
+                time.sleep(0.5)
 
             self.ctrl.run_batch(dmd_vecs, dmd_errs)
             success = self.ctrl.check_ampls()
@@ -142,6 +176,14 @@ class MyONN:
                 theory_a1 = theory_a1.get()
                 theory_z2 = theory_z2.get()
                 theory_back = theory_back.get()
+
+                # if not initial:
+                #     meas_a1 = self.ctrl.normalise_ampls(ampls=meas_a1, norm_params=self.ctrl.norm_params1)
+                #     meas_z2 = self.ctrl.normalise_ampls(ampls=meas_z2, norm_params=self.ctrl.norm_params2)
+                #     meas_back = self.ctrl.normalise_ampls(ampls=meas_back, norm_params=self.ctrl.norm_params3)
+                    # meas_a1 *= np.sign(theory_a1)
+                    # meas_z2 *= np.sign(theory_z2)
+                    # meas_back *= np.sign(theory_back)
 
                 meass_a1.append(meas_a1)
                 theorys_a1.append(theory_a1)
@@ -194,14 +236,14 @@ class MyONN:
         meas_back = np.array(meass_back).reshape(5 * self.num_frames, self.m)
         theory_back = np.array(theorys_back).reshape(5 * self.num_frames, self.m)
 
-        if initial:
-            self.ctrl.norm_params1 = self.ctrl.find_norm_params(theory_a1, meas_a1)
-            self.ctrl.norm_params2 = self.ctrl.find_norm_params(theory_z2, meas_z2)
-            self.ctrl.norm_params3 = self.ctrl.find_norm_params(theory_back, meas_back)
-        else:
-            self.ctrl.norm_params1 = self.ctrl.update_norm_params(theory_a1, meas_a1, self.ctrl.norm_params1)
-            self.ctrl.norm_params2 = self.ctrl.update_norm_params(theory_z2, meas_z2, self.ctrl.norm_params2)
-            self.ctrl.norm_params3 = self.ctrl.update_norm_params(theory_back, meas_back, self.ctrl.norm_params2)
+        # if initial:
+        self.ctrl.norm_params1 = self.ctrl.find_norm_params(theory_a1, meas_a1)
+        self.ctrl.norm_params2 = self.ctrl.find_norm_params(theory_z2, meas_z2)
+        self.ctrl.norm_params3 = self.ctrl.find_norm_params(theory_back, meas_back)
+        # else:
+        #     self.ctrl.norm_params1 = self.ctrl.update_norm_params(theory_a1, meas_a1, self.ctrl.norm_params1)
+        #     self.ctrl.norm_params2 = self.ctrl.update_norm_params(theory_z2, meas_z2, self.ctrl.norm_params2)
+        #     self.ctrl.norm_params3 = self.ctrl.update_norm_params(theory_back, meas_back, self.ctrl.norm_params3)
 
         meas_a1 = self.ctrl.normalise_ampls(ampls=meas_a1, norm_params=self.ctrl.norm_params1)
         meas_z2 = self.ctrl.normalise_ampls(ampls=meas_z2, norm_params=self.ctrl.norm_params2)
@@ -221,7 +263,6 @@ class MyONN:
                       f'ratio2 : {theory_z2.std()/error2:.3f}', 'blue'))
         print(colored(f'error3 : {error3:.3f}, signal3 : {theory_back.std():.3f}, '
                       f'ratio3 : {theory_back.std()/error3:.3f}', 'blue'))
-        print()
 
         self.axs0.cla()
         low = -2
@@ -260,102 +301,15 @@ class MyONN:
         # plt.pause(1)
         plt.show()
 
-    def init_onn(self):
-
-        m_dw1 = np.zeros((self.ctrl.n - 1, self.ctrl.m))
-        v_dw1 = np.zeros((self.ctrl.n - 1, self.ctrl.m))
-
-        m_db1 = np.zeros(self.ctrl.m)
-        v_db1 = np.zeros(self.ctrl.m)
-
-        m_dw2 = np.zeros((self.ctrl.m, 1))
-        v_dw2 = np.zeros((self.ctrl.m, 1))
-
-        beta1 = 0.9
-        beta2 = 0.999
-
-        adam_params = (m_dw1, v_dw1, m_db1, v_db1, m_dw2, v_dw2, beta1, beta2)
-
-        self.dnn = DNN_backprop(*adam_params, w1_0=self.w1, w2_0=self.w2, b1_0=self.b1,
-                                batch_size=self.batch_size, num_batches=self.num_batches,
-                                lr=self.lr)
-
-        self.axs5.plot(self.accs, linestyle='-', marker='x', c='g')
-        self.axs2.plot(self.loss, linestyle='-', marker='', c='r')
-        self.axs4.plot(self.errors1, linestyle='-', marker='', c='b')
-        self.axs4.plot(self.errors2, linestyle='-', marker='', c='g')
-
-        self.loop_clock.tick()
-
-    # def init_epoch(self, epoch_num):
-    #
-    #     self.ctrl.update_slm1(self.w1.copy(), lut=True)
-    #     self.ctrl.update_slm2(self.w2.copy(), lut=True)
-    #     time.sleep(1)
-    #
-    #     rng = np.random.default_rng(epoch_num)
-    #     epoch_rand_indxs = np.arange(self.trainx.shape[0])
-    #     rng.shuffle(epoch_rand_indxs)
-    #     self.batch_indxs_list = [epoch_rand_indxs[i * self.batch_size: (i + 1) * self.batch_size]
-    #                              for i in range(self.num_batches)]
-    #
-    #     self.ctrl.init_dmd()
-    #
-    #     all_z1s = []
-    #     all_theories1 = []
-    #     all_z2s = []
-    #     all_theories2 = []
-    #
-    #     passed = 0
-    #     failed = 0
-    #     while passed < 3:
-    #
-    #         batch_indxs = np.random.randint(0, self.trainx.shape[0], self.batch_size)
-    #
-    #         xs = self.trainx[batch_indxs, :].copy()
-    #         vecs = cp.array(xs)
-    #
-    #         success = self.ctrl.run_batch_both(vecs, normalisation=True)
-    #
-    #         if success:
-    #             theories1 = np.dot(xs, self.dnn.w1.copy())
-    #             theories2 = np.dot(theories1, self.dnn.w2.copy())
-    #             all_z1s.append(self.ctrl.z1s)
-    #             all_theories1.append(theories1)
-    #             all_z2s.append(self.ctrl.z2s)
-    #             all_theories2.append(theories2)
-    #             passed += 1
-    #         else:
-    #             failed += 1
-    #
-    #         if failed > 3:
-    #             raise TimeoutError
-    #
-    #     all_z1s = np.array(all_z1s).reshape(3 * self.batch_size, self.m)
-    #     all_theories1 = np.array(all_theories1).reshape(3 * self.batch_size, self.m)
-    #     all_z2s = np.array(all_z2s).reshape(3 * self.batch_size, 1)
-    #     all_theories2 = np.array(all_theories2).reshape(3 * self.batch_size, 1)
-    #
-    #     self.ctrl.update_norm_params(all_theories1, all_z1s, all_theories2, all_z2s)
-    #
-    #     self.ctrl.update_slm1(self.dnn.w1.copy(), lut=True)
-    #     self.ctrl.update_slm2(self.dnn.w2.copy(), lut=True)
-    #
-    #     time.sleep(1)
 
     def run_batch(self, batch_num):
 
         print('Batch ', batch_num)
-        print()
-        t0 = time.perf_counter()
 
         ##### Start by running only forward MVM #####
 
         xs = self.trainx[self.batch_indxs_list[batch_num], :].copy()
         ys = self.trainy[self.batch_indxs_list[batch_num], :].copy()
-
-        # print(xs)
-        print(self.dnn.w1.min(), self.dnn.w1.max())
 
         self.dnn.xs = xs
         self.dnn.ys = ys
@@ -383,22 +337,19 @@ class MyONN:
         meas_z2 *= np.sign(theory_z2)
         self.dnn.z2 = meas_z2.copy()
 
-        error1 = (meas_a1 - theory_a1).std()
-        error2 = (meas_z2 - theory_z2).std()
+        error1 = (meas_a1 - theory_a1).std()/np.abs(meas_a1 - theory_a1).mean()
+        error2 = (meas_z2 - theory_z2).std()/np.abs(meas_z2 - theory_z2).mean()
         self.errors1.append(error1)
         self.errors2.append(error2)
-        print(colored(f'error1 : {error1:.3f}, error2 : {error2:.3f}', 'blue'))
-
-        self.th_line1.set_ydata(theory_a1[0, :])
-        self.meas_line1.set_ydata(meas_a1[0, :])
-        self.th_line2.set_ydata(theory_z2[0, :])
-        self.meas_line2.set_ydata(meas_z2[0, :])
+        print(colored(f'error1 : {error1:.3f}', 'blue'))
+        print(colored(f'error2 : {error2:.3f}', 'blue'))
 
         self.dnn.a2 = softmax(self.dnn.z2)
 
         ##### Now calculate error vector and perform backward MVM  #####
 
         self.dnn.loss = error(self.dnn.a2, self.dnn.ys)
+
         self.dnn.a2_delta = (self.dnn.a2 - self.dnn.ys) #/self.batch_size
         self.dnn.a2_delta = self.dnn.a2_delta/np.abs(self.dnn.a2_delta).max()
 
@@ -418,47 +369,22 @@ class MyONN:
             print('oh no')
             return False
 
-        meas_a1 = self.ctrl.ampls1.copy()
-        meas_a1 = self.ctrl.normalise_ampls(ampls=meas_a1, norm_params=self.ctrl.norm_params1)
-        theory_a1 = np.dot(xs, self.dnn.w1) + self.dnn.b1
-        meas_a1 *= np.sign(theory_a1)
-        self.dnn.a1 = meas_a1.copy()
-
-        meas_z2 = self.ctrl.ampls2.copy()
-        meas_z2 = self.ctrl.normalise_ampls(ampls=meas_z2, norm_params=self.ctrl.norm_params2)
-        theory_z2 = np.dot(theory_a1, self.dnn.w2.T)
-        meas_z2 *= np.sign(theory_z2)
-        self.dnn.z2 = meas_z2.copy()
-
         meas_back = self.ctrl.ampls3.copy()
         meas_back = self.ctrl.normalise_ampls(ampls=meas_back, norm_params=self.ctrl.norm_params3)
         theory_back = np.dot(self.dnn.a2_delta, self.dnn.w2)
         meas_back *= np.sign(theory_back)
         self.dnn.a1_delta = meas_back.copy()
 
-        error1 = (meas_a1 - theory_a1).std()
-        error2 = (meas_z2 - theory_z2).std()
-        error3 = (meas_back - theory_back).std()
-        self.errors1.append(error1)
-        self.errors2.append(error2)
+        error3 = (meas_back - theory_back).std()/np.abs(meas_back - theory_back).mean()
         self.errors3.append(error3)
-        print(colored(f'error1 : {error1:.3f}, error2 : {error2:.3f},  error3 : {error3:.3f}', 'blue'))
-        print()
+        print(colored(f'error3 : {error3:.3f}', 'blue'))
 
-        self.th_line1.set_ydata(theory_a1[0, :])
-        self.meas_line1.set_ydata(meas_a1[0, :])
-        self.th_line2.set_ydata(theory_z2[0, :])
-        self.meas_line2.set_ydata(meas_z2[0, :])
-        self.th_line3.set_ydata(theory_back[0, :])
-        self.meas_line3.set_ydata(meas_back[0, :])
-
-        self.img1.set_array(self.ctrl.frames1[0])
-        self.img2.set_array(self.ctrl.frames2[0])
-        self.img3.set_array(self.ctrl.frames3[0])
-
-        self.axsa.cla()
-        self.axsa.set_ylim(0, 0.5)
-        self.axsa.plot(self.loss)
+        self.meas_a1 = meas_a1
+        self.theory_a1 = theory_a1
+        self.meas_z2 = meas_z2
+        self.theory_z2 = theory_z2
+        self.meas_back = meas_back
+        self.theory_back = theory_back
 
         ##### Calculate and perform weight update  #####
 
@@ -476,25 +402,25 @@ class MyONN:
 
         self.ctrl.update_slm1(slm_arr, lut=True)
         self.ctrl.update_slm2(slm2_arr, lut=True)
-        #
-        # time.sleep(1)
 
-        if self.dnn.loss < self.loss[-1]:
-            self.best_w1 = self.dnn.w1.copy()
-            self.best_w2 = self.dnn.w2.copy()
-            self.best_b1 = self.dnn.b1.copy()
+        try:
+            if self.dnn.loss < self.loss[-1]:
+                self.best_w1 = self.dnn.w1.copy()
+                self.best_w2 = self.dnn.w2.copy()
+                self.best_b1 = self.dnn.b1.copy()
+            else:
+                pass
+        except:
+            pass
 
         self.loss.append(self.dnn.loss)
         print(colored('loss : {:.2f}'.format(self.dnn.loss), 'green'))
+        self.loss_plot.pop(0).remove()
+        self.loss_plot = self.axsa.plot(self.loss, linestyle='-', marker='', c='b')
 
-        t1 = time.perf_counter()
-        print('batch time: {:.2f}'.format(t1 - t0))
+        return True
 
-        dt = self.loop_clock.tick()
-        print(colored(dt, 'yellow'))
-        print()
-
-    def run_validation(self, epoch_num):
+    def run_validation(self, epoch):
 
         self.dnn.w1 = self.best_w1.copy()
         self.dnn.w2 = self.best_w2.copy()
@@ -510,7 +436,6 @@ class MyONN:
         self.ctrl.update_slm2(slm2_arr, lut=True)
         time.sleep(1)
 
-        print()
         t0 = time.perf_counter()
 
         xs = self.testx.copy().reshape((10, 10, 2))
@@ -518,7 +443,8 @@ class MyONN:
 
         all_meas = np.empty((10, 10))
 
-        for batch in range(10):
+        batch = 0
+        while batch < 10:
 
             print(batch)
 
@@ -530,89 +456,120 @@ class MyONN:
             self.ctrl.run_batch(dmd_vecs)
             success = self.ctrl.check_ampls(a1=True, z2=True, back=False)
             if not success:
-                print('oh no')
-                return False
+                print('oh no, trying again')
 
-            meas_a1 = self.ctrl.ampls1.copy()
-            meas_a1 = self.ctrl.normalise_ampls(ampls=meas_a1, norm_params=self.ctrl.norm_params1)
-            theory_a1 = np.dot(xs[batch], self.dnn.w1) + self.dnn.b1
-            meas_a1 *= np.sign(theory_a1)
+            else:
+                meas_a1 = self.ctrl.ampls1.copy()
+                meas_a1 = self.ctrl.normalise_ampls(ampls=meas_a1, norm_params=self.ctrl.norm_params1)
+                theory_a1 = np.dot(xs[batch], self.dnn.w1) + self.dnn.b1
+                meas_a1 *= np.sign(theory_a1)
 
-            meas_z2 = self.ctrl.ampls2.copy()
-            meas_z2 = self.ctrl.normalise_ampls(ampls=meas_z2, norm_params=self.ctrl.norm_params2)
-            theory_z2 = np.dot(theory_a1, self.dnn.w2.T)
-            meas_z2 *= np.sign(theory_z2)
+                meas_z2 = self.ctrl.ampls2.copy()
+                meas_z2 = self.ctrl.normalise_ampls(ampls=meas_z2, norm_params=self.ctrl.norm_params2)
+                theory_z2 = np.dot(theory_a1, self.dnn.w2.T)
+                meas_z2 *= np.sign(theory_z2)
 
-            all_meas[batch, ...] = softmax(meas_z2).argmax(axis=1)
+                all_meas[batch, ...] = softmax(meas_z2).argmax(axis=1)
 
-            self.th_line1.set_ydata(theory_a1[0, :])
-            self.meas_line1.set_ydata(meas_a1[0, :])
-            self.th_line2.set_ydata(theory_z2[0, :])
-            self.meas_line2.set_ydata(meas_z2[0, :])
+                self.th_line1.set_ydata(theory_a1[0, :])
+                self.meas_line1.set_ydata(meas_a1[0, :])
+                self.th_line2.set_ydata(theory_z2[0, :])
+                self.meas_line2.set_ydata(meas_z2[0, :])
+
+                batch += 1
 
         pred = all_meas.reshape(100)
         label = ys.copy().reshape(100)
 
         acc = accuracy(pred, label)
         self.accs.append(acc)
-        self.axsb.cla()
-        self.axsb.set_ylim(0, 100)
-        self.axsb.plot(self.accs)
-        print(colored(acc, 'green'))
 
-    def save_data_batch(self, epoch_num, batch_num):
+        self.test_scatter.remove()
+        self.test_scatter = self.axse.scatter(self.testx[:, 0], self.testx[:, 1], c=pred)
 
-        np.save('D:/MNIST/raw_images/training/images/images_epoch_{}_batch_{}.npy'
-                .format(epoch_num, batch_num), self.ctrl.frames)
-        np.save('D:/MNIST/data/training/ampls/ampls_epoch_{}_batch_{}.npy'
-                .format(epoch_num, batch_num), self.ctrl.ampls)
+        self.accs_plot.pop(0).remove()
+        self.accs_plot = self.axsb.plot(self.accs, linestyle='-', marker='', c='b')
 
-        np.save('D:/MNIST/data/loss.npy', np.array(self.loss))
+        np.save(self.save_folder+f'predictions/predictions_epoch{epoch}.npy', pred)
+        np.save(self.save_folder+f'labels/labels_epoch{epoch}.npy', label)
+        np.save(self.save_folder+f'accuracies.npy', np.array(self.accs))
 
-        np.save('D:/MNIST/data/training/measured/measured_arr_epoch_{}_batch_{}.npy'
-                .format(epoch_num, batch_num), self.measured)
-        np.save('D:/MNIST/data/training/theory/theory_arr_epoch_{}_batch_{}.npy'
-                .format(epoch_num, batch_num), self.theory)
+        print()
 
-        np.save('D:/MNIST/data/w1/w1_epoch_{}_batch_{}.npy'.format(epoch_num, batch_num), np.array(self.dnn.w1))
-        np.save('D:/MNIST/data/w2/w2_epoch_{}_batch_{}.npy'.format(epoch_num, batch_num), np.array(self.dnn.w2))
+    def save_batch(self, epoch, batch):
 
-    def save_data_epoch(self):
+        np.save(self.save_folder+f'frames1/frames1_epoch{epoch}_batch{batch}.npy',
+                self.ctrl.frames1)
+        np.save(self.save_folder+f'frames2/frames2_epoch{epoch}_batch{batch}.npy',
+                self.ctrl.frames2)
+        np.save(self.save_folder+f'frames3/frames3_epoch{epoch}_batch{batch}.npy',
+                self.ctrl.frames3)
 
-        np.save('D:/MNIST/data/accuracy.npy', np.array(self.accs))
-        np.save('D:/MNIST/data/best_w1.npy', self.best_w1)
-        np.save('D:/MNIST/data/best_w2.npy', self.best_w2)
+        np.save(self.save_folder+f'raw_ampls1/raw_ampls1_epoch{epoch}_batch{batch}.npy',
+                self.ctrl.ampls1)
+        np.save(self.save_folder+f'raw_ampls2/raw_ampls2_epoch{epoch}_batch{batch}.npy',
+                self.ctrl.ampls2)
+        np.save(self.save_folder+f'raw_ampls3/raw_ampls3_epoch{epoch}_batch{batch}.npy',
+                self.ctrl.ampls3)
+
+        np.save(self.save_folder+f'meas_a1/meas_a1_epoch{epoch}_batch{batch}.npy',
+                self.meas_a1)
+        np.save(self.save_folder+f'meas_z2/meas_z2_epoch{epoch}_batch{batch}.npy',
+                self.meas_z2)
+        np.save(self.save_folder+f'meas_back/meas_back_epoch{epoch}_batch{batch}.npy',
+                self.meas_back)
+
+        np.save(self.save_folder+f'theory_a1/theory_a1_epoch{epoch}_batch{batch}.npy',
+                self.theory_a1)
+        np.save(self.save_folder+f'theory_z2/theory_z2_epoch{epoch}_batch{batch}.npy',
+                self.theory_z2)
+        np.save(self.save_folder+f'theory_back/theory_back_epoch{epoch}_batch{batch}.npy',
+                self.theory_back)
+
+        np.save(self.save_folder+f'xs/xs_epoch{epoch}_batch{batch}.npy',
+                self.dnn.xs)
+        np.save(self.save_folder+f'ys/ys_epoch{epoch}_batch{batch}.npy',
+                self.dnn.ys)
+        np.save(self.save_folder+f'w1s/w1_epoch{epoch}_batch{batch}.npy',
+                self.dnn.w1)
+        np.save(self.save_folder+f'b1s/b1_epoch{epoch}_batch{batch}.npy',
+                self.dnn.b1)
+        np.save(self.save_folder+f'w2s/w2_epoch{epoch}_batch{batch}.npy',
+                self.dnn.w2)
+
+        np.save(self.save_folder+f'loss.npy', np.array(self.loss))
+
+
+    def graph_batch(self, epoch_num, batch_num):
+
+        self.th_line1.set_ydata(self.theory_a1[0, :])
+        self.meas_line1.set_ydata(self.meas_a1[0, :])
+        self.th_line2.set_ydata(self.theory_z2[0, :])
+        self.meas_line2.set_ydata(self.meas_z2[0, :])
+        self.th_line3.set_ydata(self.theory_back[0, :])
+        self.meas_line3.set_ydata(self.meas_back[0, :])
+
+        self.img1.set_array(self.ctrl.frames1[0])
+        self.img2.set_array(self.ctrl.frames2[0])
+        self.img3.set_array(self.ctrl.frames3[0])
+
+        self.err1_plot.pop(0).remove()
+        self.err1_plot = self.axsc.plot(self.errors1, linestyle='-', marker='', c='r')
+        self.err2_plot.pop(0).remove()
+        self.err2_plot = self.axsc.plot(self.errors2, linestyle='-', marker='', c='g')
+        self.err3_plot.pop(0).remove()
+        self.err3_plot = self.axsc.plot(self.errors3, linestyle='-', marker='', c='b')
+
 
 
 if __name__ == "__main__":
 
     n, m, k = 3, 10, 3
-    num_frames = 10
-    num_batches = 20
+
+    batch_size = 10
+    num_batches = 10
     num_epochs = 20
-    ctrl_vars = (n, m, k, num_frames)
-
-    from sklearn.datasets import make_classification
-    x, y = make_classification(n_samples=500, n_features=2, n_informative=2, n_redundant=0, n_repeated=0, n_classes=3,
-                               n_clusters_per_class=1, weights=None, flip_y=0.01, class_sep=1.0, hypercube=True, shift=0.0,
-                               scale=1.0, shuffle=True, random_state=6)
-
-    y_onehot = np.zeros((500, 3))
-
-    for i in range(500):
-        y_onehot[i, int(y[i])] = 1
-
-    trainy = y_onehot[:400, :].copy()
-    testy = y_onehot[400:, :].copy()
-
-    xnorm = x.copy()
-    xnorm[:, 0] -= xnorm[:, 0].min()
-    xnorm[:, 0] *= 1./xnorm[:, 0].max()
-    xnorm[:, 1] -= xnorm[:, 1].min()
-    xnorm[:, 1] *= 1./xnorm[:, 1].max()
-
-    trainx = xnorm[:400, :].copy()
-    testx = xnorm[400:, :].copy()
+    lr = 0.05
 
     slm_arr = np.random.normal(0, 0.5, (n, m))
     slm_arr = np.clip(slm_arr, -1, 1)
@@ -622,33 +579,13 @@ if __name__ == "__main__":
     slm2_arr = np.clip(slm2_arr, -1, 1)
     slm2_arr = (slm2_arr*64).astype(np.int)/64
 
-    onn = MyONN(lr=0.01, num_batches=num_batches, num_epochs=num_epochs, ctrl_vars=ctrl_vars)
-
-    onn.w1 = slm_arr[1:, :]
-    onn.w2 = slm2_arr
-    onn.b1 = slm_arr[0, :]
+    onn = MyONN(num_batches=num_batches, num_epochs=num_epochs,
+                w1_0=slm_arr[1:, :], w2_0=slm2_arr, b1_0=slm_arr[0, :],
+                lr=lr, ctrl_vars=(n, m, k, batch_size))
 
     onn.graphs()
-    onn.init_onn()
+
     onn.run_calibration(initial=True)
-
-    onn.trainx = trainx
-    onn.trainy = trainy
-    onn.testx = testx
-    onn.testy = testy
-
-    for epoch_num in range(num_epochs):
-
-        rng = np.random.default_rng(epoch_num)
-        epoch_rand_indxs = np.arange(onn.trainx.shape[0])
-        rng.shuffle(epoch_rand_indxs)
-        onn.batch_indxs_list = [epoch_rand_indxs[i * onn.batch_size: (i + 1) * onn.batch_size]
-                                for i in range(onn.num_batches)]
-
-        for batch in range(num_batches):
-            onn.run_batch(batch)
-
-        onn.run_validation(epoch_num)
 
     plt.show(block=True)
 

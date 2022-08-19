@@ -379,11 +379,9 @@ class Controller:
 
             if maxs[0] > 0.1:
                 print(colored('frames out of sync', 'red'))
-                print()
                 success = False
             elif maxs[-1] > 0.1:
                 print(colored('frames out of sync', 'red'))
-                print()
                 success = False
             else:
                 start = (maxs > 0.1).argmax()
@@ -393,7 +391,6 @@ class Controller:
 
                 if ampls.shape[0] != self.num_frames:
                     print(colored('wrong num frames', 'red'))
-                    print()
                     success = False
                 # else:
                 #     diffs = np.abs(np.diff(ampls, axis=0))
@@ -403,17 +400,11 @@ class Controller:
                 #     repeats = (diffs < 0.015).sum() > 0
                 #     if repeats:
                 #         print(colored('repeated frames', 'red'))
-                #         print()
-                #         print(diffs)
-                #         print()
-                #         print(ampls)
-                #         print()
                 #         success = False
                 else:
                     processed_ampls[key] = ampls
                     processed_frames[key] = frames
 
-        print()
         if success:
             if a1:
                 self.ampls1 = processed_ampls['a1']
@@ -480,7 +471,7 @@ class Controller:
 
         assert theory.shape[1] == measured.shape[1]
 
-        norm_params_adjust = np.array([curve_fit(line, theory[:, j], measured[:, j])[0]
+        norm_params_adjust = np.array([curve_fit(line, np.abs(theory[:, j]), measured[:, j])[0]
                                        for j in range(theory.shape[1])])
         norm_params[:, 1] += norm_params[:, 0].copy() * norm_params_adjust[:, 1].copy()
         norm_params[:, 0] *= norm_params_adjust[:, 0].copy()
