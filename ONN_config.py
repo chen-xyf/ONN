@@ -478,11 +478,6 @@ class Controller:
 
         return norm_params
 
-    @staticmethod
-    def normalise_ampls(ampls, norm_params):
-        ampls = (ampls - norm_params[:, 1].copy()) / norm_params[:, 0].copy()
-        return ampls
-
     def close(self):
         self.cameras.Close()
         # imageWindow.Close()

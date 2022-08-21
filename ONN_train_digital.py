@@ -5,6 +5,7 @@ from ONN_class import MyONN
 from sklearn.datasets import make_classification
 from datetime import datetime
 import os
+import matplotlib.pyplot as plt
 from tqdm import trange
 
 ################################
@@ -38,9 +39,9 @@ testx = xnorm[400:, :].copy()
 
 n, m, k = 3, 10, 3
 
-batch_size = 10
-num_batches = 20
-num_epochs = 20
+batch_size = 40
+num_batches = 10
+num_epochs = 50
 lr = 0.01
 
 np.random.seed(0)
@@ -54,14 +55,14 @@ slm2_arr = np.clip(slm2_arr, -1, 1)
 slm2_arr = (slm2_arr*64).astype(np.int)/64
 
 today_date = datetime.today().strftime('%Y-%m-%d')
-save_folder = 'D:/ONN_backprop/'+today_date+'/run_1/'
+save_folder = 'D:/ONN_backprop/'+today_date+'/temp/'
 
-if os.path.exists(save_folder+'NOTES.txt'):
-    print('Folder already exists!')
-    raise RuntimeError
-else:
-    with open(save_folder+'NOTES.txt', mode="w") as f:
-        f.write("OPTICAL TRAINING")
+# if os.path.exists(save_folder+'NOTES.txt'):
+#     print('Folder already exists!')
+#     raise RuntimeError
+# else:
+#     with open(save_folder+'NOTES.txt', mode="w") as f:
+#         f.write("OPTICAL TRAINING")
 
 np.save(save_folder + 'trainx.npy', trainx)
 np.save(save_folder + 'trainy.npy', trainy)
@@ -80,16 +81,11 @@ onn = MyONN(num_batches=num_batches, num_epochs=num_epochs,
             lr=lr, ctrl_vars=(n, m, k, batch_size),
             save_folder=save_folder,
             trainx=trainx, testx=testx, trainy=trainy, testy=testy,
-            forward='optical', backward='optical')
+            forward='digital', backward='digital')
 
 print('Epoch  Loss   Time   Accuracy')
 
 for epoch in range(num_epochs):
-
-    if epoch == 0:
-        onn.run_calibration(initial=True)
-    # else:
-    #     onn.run_calibration(initial=True)
 
     rng = np.random.default_rng(epoch)
     epoch_rand_indxs = np.arange(onn.trainx.shape[0])
@@ -100,25 +96,17 @@ for epoch in range(num_epochs):
     t = trange(num_batches, position=0, desc=f"epoch {epoch}", leave=True)
 
     for batch in t:
-        success = onn.run_batch(batch)
-        if success:
-            onn.save_batch(epoch, batch)
-            onn.graph_batch()
-            dt = onn.loop_clock.tick()
-            t.set_description(f"{epoch:2d}"+" "*6+f"{onn.loss[-1]:.3f}"+" "*2+f"{dt:.3f}"
-                              + " "*2+"--.-"+" "*5)
+
+        onn.run_batch(batch)
+        dt = onn.loop_clock.tick()
+        t.set_description(f"{epoch:2d}"+" "*6+f"{onn.loss[-1]:.3f}"+" "*2+f"{dt:.3f}"
+                          + " "*2+"--.-"+" "*5)
+        # time.sleep(0.1)
 
         if batch == num_batches - 1:
             onn.run_validation(epoch)
             t.set_description(f"{epoch:2d}"+" "*6+f"{onn.loss[-1]:.3f}"+" "*2+f"{dt:.3f}"
                               + " "*2+f"{onn.accs[-1]:04.1f}"+" "*5)
 
-    # t1 = time.perf_counter()
-    # epoch_time = t1 - t0
-    #
-    # print('\n######################################################################')
-    # print(colored('epoch {}, time : {}, accuracy : {:.2f}, final loss : {:.2f}'
-    #               .format(epoch, epoch_time, onn.accs[-1], onn.loss[-1]), 'green'))
-    # print('######################################################################\n')
-
+plt.show(block=True)
 print('done')
