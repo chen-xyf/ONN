@@ -41,10 +41,10 @@ n, m, k = 3, 10, 3
 
 batch_size = 40
 num_batches = 10
-num_epochs = 50
+num_epochs = 20
 lr = 0.01
 
-np.random.seed(0)
+np.random.seed(1)
 
 slm_arr = np.random.normal(0, 0.5, (n, m))
 slm_arr = np.clip(slm_arr, -1, 1)
@@ -76,14 +76,17 @@ np.save(save_folder + 'all_params.npy', all_params)
 # Optical training  #
 #####################
 
-onn = MyONN(num_batches=num_batches, num_epochs=num_epochs,
+onn = MyONN(batch_size=batch_size, num_batches=num_batches, num_epochs=num_epochs,
             w1_0=slm_arr[1:, :], w2_0=slm2_arr, b1_0=slm_arr[0, :],
-            lr=lr, ctrl_vars=(n, m, k, batch_size),
+            lr=lr, dimensions=(n, m, k,),
             save_folder=save_folder,
             trainx=trainx, testx=testx, trainy=trainy, testy=testy,
             forward='digital', backward='digital')
 
+onn.run_validation(99)
+
 print('Epoch  Loss   Time   Accuracy')
+time.sleep(0.2)
 
 for epoch in range(num_epochs):
 
@@ -98,6 +101,7 @@ for epoch in range(num_epochs):
     for batch in t:
 
         onn.run_batch(batch)
+        onn.save_batch(epoch, batch)
         dt = onn.loop_clock.tick()
         t.set_description(f"{epoch:2d}"+" "*6+f"{onn.loss[-1]:.3f}"+" "*2+f"{dt:.3f}"
                           + " "*2+"--.-"+" "*5)

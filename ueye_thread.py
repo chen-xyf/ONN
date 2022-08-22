@@ -59,14 +59,14 @@ class UeyeCamera(Thread):
             print("is_SetExternalTrigger ERROR")
 
         # set framerate to just above trigger framerate
-        framerate = 70
+        framerate = 140
         actual_fr = ueye.DOUBLE(0.)
         nret = ueye.is_SetFrameRate(self.hCam3, ueye.DOUBLE(framerate), actual_fr)
         if nret != ueye.IS_SUCCESS:
             print("is_SetFrameRate ERROR")
 
         # set exposure time
-        exposure = 2
+        exposure = 10
         nret = ueye.is_Exposure(self.hCam3, ueye.IS_EXPOSURE_CMD_SET_EXPOSURE, ueye.DOUBLE(exposure),
                                 ueye.sizeof(ueye.DOUBLE(exposure)))
         if nret != ueye.IS_SUCCESS:
@@ -155,7 +155,7 @@ class UeyeCamera(Thread):
         frame[mask] = 0
 
         self.frames.append(frame.T)
-        self.frames = self.frames[-20:]
+        self.frames = self.frames[-50:]
 
         if self.live:
             cv2.imshow('ueye', frame.T)

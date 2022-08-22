@@ -80,7 +80,7 @@ onn = MyONN(batch_size=batch_size, num_batches=num_batches, num_epochs=num_epoch
             lr=lr, dimensions=(n, m, k),
             save_folder=save_folder,
             trainx=trainx, testx=testx, trainy=trainy, testy=testy,
-            forward='optical', backward='optical')
+            forward='optical', backward='digital')
 
 
 onn.run_calibration(initial=True)

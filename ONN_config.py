@@ -64,23 +64,21 @@ class CaptureProcess(pylon.ImageEventHandler):
             #     ampls = np.flip(ampls)
 
             self.frames.append(image.T)
-            self.frames = self.frames[-20:]  # only store the 20 most recent frames
+            self.frames = self.frames[-50:]  # only store the 20 most recent frames
 
             self.ampls.append(ampls)
-            self.ampls = self.ampls[-20:]  # only store the 20 most recent frames
+            self.ampls = self.ampls[-50:]  # only store the 20 most recent frames
 
 
 class Controller:
 
-    def __init__(self,  _n, _m, _k, _num_frames=5, _scale_guess=2, _ref_guess=0,
+    def __init__(self,  _n, _m, _k, _num_frames=10,
                  use_pylons=True, use_ueye=True, live=False):
 
         self.n = _n
         self.m = _m
         self.k = _k
         self.num_frames = _num_frames
-        self.scale_guess = _scale_guess
-        self.ref_guess = _ref_guess
         self.live = live
 
         #################
@@ -176,12 +174,7 @@ class Controller:
 
         self.screen, self.cuda_buffer, self.context = setup(1920, 1080)
 
-        self.null_frames = cp.zeros((self.num_frames + 4, 1080, 1920, 4), dtype=cp.uint8)
-        self.null_frames[..., -1] = 255
-
         print('started slm windows')
-
-
 
         ###############
 
@@ -378,10 +371,12 @@ class Controller:
             # print(maxs)
 
             if maxs[0] > 0.1:
-                print(colored('frames out of sync', 'red'))
+                # print(colored('frames out of sync', 'red'))
+                error = 'sync '
                 success = False
             elif maxs[-1] > 0.1:
-                print(colored('frames out of sync', 'red'))
+                # print(colored('frames out of sync', 'red'))
+                error = 'sync '
                 success = False
             else:
                 start = (maxs > 0.1).argmax()
@@ -390,7 +385,8 @@ class Controller:
                 frames = frames[start:end, ...]
 
                 if ampls.shape[0] != self.num_frames:
-                    print(colored('wrong num frames', 'red'))
+                    # print(colored('wrong num frames', 'red'))
+                    error = 'count'
                     success = False
                 # else:
                 #     diffs = np.abs(np.diff(ampls, axis=0))
@@ -415,9 +411,9 @@ class Controller:
             if back:
                 self.ampls3 = processed_ampls['back']
                 self.frames3 = processed_frames['back']
-            return True
+            return True, None
         else:
-            return False
+            return False, error
 
     def update_slm1(self, arr, phi=None, lut=True):
 

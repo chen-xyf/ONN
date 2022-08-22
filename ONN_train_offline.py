@@ -80,7 +80,7 @@ onn = MyONN(batch_size=batch_size, num_batches=num_batches, num_epochs=num_epoch
             lr=lr, dimensions=(n, m, k),
             save_folder=save_folder,
             trainx=trainx, testx=testx, trainy=trainy, testy=testy,
-            forward='optical', backward='optical')
+            forward='optical', backward='digital')
 
 
 onn.run_calibration(initial=True)
@@ -109,16 +109,16 @@ for epoch in range(num_epochs):
                leave=True)
 
     for batch in t:
-        success, err = onn.run_batch(batch)
 
-        if success:
-            onn.save_batch(epoch, batch)
-            onn.graph_batch()
-            dt = onn.loop_clock.tick()
-            t.set_description(f"{epoch:2d}"+" "*6+f"{onn.loss[-1]:.3f}"+" "*2+f"{dt:.3f}"
-                              + " "*2+"--.-"+" "*5)
+        onn.forward = 'digital'
+        onn.run_batch(batch)
+        onn.save_batch(epoch, batch)
+        dt = onn.loop_clock.tick()
+        t.set_description(f"{epoch:2d}"+" "*6+f"{onn.loss[-1]:.3f}"+" "*2+f"{dt:.3f}"
+                          + " "*2+"--.-"+" "*5)
 
         if batch == num_batches - 1:
+            onn.forward = 'optical'
             onn.run_validation(epoch)
             t.set_description(f"{epoch:2d}"+" "*6+f"{onn.loss[-1]:.3f}"+" "*2+f"{dt:.3f}"
                               + " "*2+f"{onn.accs[-1]:04.1f}"+" "*5)
