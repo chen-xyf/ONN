@@ -53,8 +53,8 @@ class CaptureProcess(pylon.ImageEventHandler):
 
             image = grab_result.GetArray().T
 
-            mask = image < 4
-            image -= 3
+            mask = image < 3
+            image -= 2
             image[mask] = 0
 
             spots = image[self.spot_indxs, self.y_center-2:self.y_center+3].copy()
@@ -64,10 +64,10 @@ class CaptureProcess(pylon.ImageEventHandler):
             #     ampls = np.flip(ampls)
 
             self.frames.append(image.T)
-            self.frames = self.frames[-50:]  # only store the 20 most recent frames
+            self.frames = self.frames[-20:]  # only store the 20 most recent frames
 
             self.ampls.append(ampls)
-            self.ampls = self.ampls[-50:]  # only store the 20 most recent frames
+            self.ampls = self.ampls[-20:]  # only store the 20 most recent frames
 
 
 class Controller:
@@ -99,13 +99,16 @@ class Controller:
             pylon.FeaturePersistence.Load("./tools/MVM v3/pylon_settings_a1.pfs", self.cameras[0].GetNodeMap())
             pylon.FeaturePersistence.Load("./tools/MVM v3/pylon_settings_back.pfs", self.cameras[1].GetNodeMap())
 
-            self.imageWindow1 = pylon.PylonImageWindow()
-            self.imageWindow1.Create(1)
-            self.imageWindow1.Show()
+            # self.imageWindow1 = pylon.PylonImageWindow()
+            # self.imageWindow1.Create(1)
+            # self.imageWindow1.Show()
 
-            self.imageWindow3 = pylon.PylonImageWindow()
-            self.imageWindow3.Create(3)
-            self.imageWindow3.Show()
+            # self.imageWindow3 = pylon.PylonImageWindow()
+            # self.imageWindow3.Create(3)
+            # self.imageWindow3.Show()
+
+            self.imageWindow1 = None
+            self.imageWindow3 = None
 
             self.capture1 = CaptureProcess(self.imageWindow1, self.live, self.m)
             self.capture3 = CaptureProcess(self.imageWindow3, self.live, self.m, back=True)
@@ -272,22 +275,25 @@ class Controller:
         self.cp_arr = self.target_frames[0]
         self.frame_count = 0
 
+        self.capture3.frames = []
         self.capture1.frames = []
         self.capture2.frames = []
-        self.capture3.frames = []
+
+        self.capture3.ampls = []
         self.capture1.ampls = []
         self.capture2.ampls = []
-        self.capture3.ampls = []
 
         app.run(clock=self.dmd_clock, framerate=0, framecount=self.fc)
         time.sleep(0.1)
 
+        self.frames3 = np.array(self.capture3.frames)
         self.frames1 = np.array(self.capture1.frames)
         self.frames2 = np.array(self.capture2.frames)
-        self.frames3 = np.array(self.capture3.frames)
+
+        self.ampls3 = np.array(self.capture3.ampls)
         self.ampls1 = np.array(self.capture1.ampls)
         self.ampls2 = np.array(self.capture2.ampls)
-        self.ampls3 = np.array(self.capture3.ampls)
+
 
         return
 
@@ -344,7 +350,7 @@ class Controller:
     #
     #     return spot_ampls
 
-    def check_ampls(self, a1=True, z2=True, back=True):
+    def check_ampls(self, a1=True, z2=True, back=True, calib=False):
 
         success = True
         processed_ampls = {}
@@ -368,24 +374,39 @@ class Controller:
             frames = checklist_frames[key]
 
             maxs = ampls.max(axis=1)
+            # print(key, ":")
             # print(maxs)
 
             if maxs[0] > 0.1:
-                # print(colored('frames out of sync', 'red'))
+                print(colored('frames out of sync ^', 'red'))
                 error = 'sync '
+                # print(maxs)
                 success = False
             elif maxs[-1] > 0.1:
-                # print(colored('frames out of sync', 'red'))
+                print(colored('frames out of sync ^', 'red'))
                 error = 'sync '
+                # print(maxs)
                 success = False
             else:
                 start = (maxs > 0.1).argmax()
                 end = maxs.shape[0] - np.flip((maxs > 0.1)).argmax()
+
+                if not calib:
+                    if key == 'a1':
+                        a1_start = start
+                        a1_end = end
+                    if key == 'back':
+                        # back_start = start
+                        # back_end = end
+                        start = a1_start
+                        end = a1_end
+
                 ampls = ampls[start:end, :]
                 frames = frames[start:end, ...]
 
                 if ampls.shape[0] != self.num_frames:
-                    # print(colored('wrong num frames', 'red'))
+                    print(colored(f'wrong num frames ^', 'red'))
+                    # print(maxs)
                     error = 'count'
                     success = False
                 # else:
@@ -400,6 +421,12 @@ class Controller:
                 else:
                     processed_ampls[key] = ampls
                     processed_frames[key] = frames
+
+        # if back:
+        #     if a1_start != back_start:
+        #         print(a1_start, back_start)
+        #     if a1_end != back_end:
+        #         print(a1_end, back_end)
 
         if success:
             if a1:
@@ -442,7 +469,7 @@ class Controller:
 
         if lut:
             map_indx = cp.argmin(cp.abs(self.gpu_ampl_lut_slm2 - gpu_a), axis=0)
-            gpu_a = cp.linspace(0., 1., 32)[map_indx]
+            gpu_a = cp.linspace(0., 1., 64)[map_indx]
 
         img = make_slm2_rgb(gpu_a, gpu_phi)
         self.slm.updateArray('SLM2', img)
@@ -453,10 +480,21 @@ class Controller:
         def line(x, grad, c):
             return (grad * x) + c
 
+        def line_no_c(x, grad):
+            return grad*x
+
         assert theory.shape[1] == measured.shape[1]
 
-        norm_params = np.array([curve_fit(line, np.abs(theory[:, j]), measured[:, j])[0]
-                               for j in range(theory.shape[1])])
+        norm_params = np.empty((theory.shape[1], 2))
+        for j in range(theory.shape[1]):
+
+            # print(theory[:, j].std())
+
+            # if theory[:, j].std() < 0.1:
+            #     norm_params[j, :] = np.array([curve_fit(line_no_c, np.abs(theory[:, j]), measured[:, j])[0], 0.])
+            # else:
+            norm_params[j, :] = curve_fit(line, np.abs(theory[:, j]), np.abs(measured[:, j]))[0]
+
         return norm_params
 
     @staticmethod
@@ -465,10 +503,21 @@ class Controller:
         def line(x, grad, c):
             return (grad * x) + c
 
+        def line_no_c(x, grad):
+            return grad*x
+
         assert theory.shape[1] == measured.shape[1]
 
-        norm_params_adjust = np.array([curve_fit(line, np.abs(theory[:, j]), measured[:, j])[0]
-                                       for j in range(theory.shape[1])])
+        norm_params_adjust = np.empty((theory.shape[1], 2))
+        for j in range(theory.shape[1]):
+            if theory[:, j].std() < 0.5:
+                norm_params_adjust[j, :] = np.array([curve_fit(line_no_c, theory[:, j], measured[:, j])[0], 0.])
+            else:
+                norm_params_adjust[j, :] = curve_fit(line, theory[:, j], measured[:, j])[0]
+
+        # print(norm_params.shape, norm_params.dtype)
+        # print(norm_params_adjust.shape,  norm_params_adjust.dtype)
+
         norm_params[:, 1] += norm_params[:, 0].copy() * norm_params_adjust[:, 1].copy()
         norm_params[:, 0] *= norm_params_adjust[:, 0].copy()
 

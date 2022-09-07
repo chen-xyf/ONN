@@ -23,10 +23,10 @@ class UeyeCamera(Thread):
             print("is_SetColorMode ERROR")
 
         # set AOI
-        fr_x1 = 642
-        fr_y1 = 920
-        self.fr_w = 808
-        self.fr_h = 90
+        fr_x1 = 1476
+        fr_y1 = 906
+        self.fr_w = 800
+        self.fr_h = 190
         rect_aoi = ueye.IS_RECT()
         rect_aoi.s32X = ueye.int(fr_x1)
         rect_aoi.s32Y = ueye.int(fr_y1)
@@ -59,14 +59,14 @@ class UeyeCamera(Thread):
             print("is_SetExternalTrigger ERROR")
 
         # set framerate to just above trigger framerate
-        framerate = 140
+        framerate = 70
         actual_fr = ueye.DOUBLE(0.)
         nret = ueye.is_SetFrameRate(self.hCam3, ueye.DOUBLE(framerate), actual_fr)
         if nret != ueye.IS_SUCCESS:
             print("is_SetFrameRate ERROR")
 
         # set exposure time
-        exposure = 10
+        exposure = 5
         nret = ueye.is_Exposure(self.hCam3, ueye.IS_EXPOSURE_CMD_SET_EXPOSURE, ueye.DOUBLE(exposure),
                                 ueye.sizeof(ueye.DOUBLE(exposure)))
         if nret != ueye.IS_SUCCESS:
@@ -149,13 +149,14 @@ class UeyeCamera(Thread):
     def process(self, data):
 
         frame = np.reshape(data, (self.fr_h, self.fr_w, 3))[..., 0].astype(np.uint8)
-        frame = ndimage.rotate(frame, -0.2, reshape=False).T
-        mask = frame < 4
-        frame -= 3
+        frame = ndimage.rotate(frame, 8.6, reshape=False).T
+        frame = frame[:, 90:125]
+        mask = frame < 3
+        frame -= 2
         frame[mask] = 0
 
         self.frames.append(frame.T)
-        self.frames = self.frames[-50:]
+        self.frames = self.frames[-20:]
 
         if self.live:
             cv2.imshow('ueye', frame.T)

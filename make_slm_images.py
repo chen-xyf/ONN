@@ -73,9 +73,9 @@ dmd_x0 = dmd_xc-(dmd_w//2)
 dmd_y0 = dmd_yc-(dmd_h//2)
 
 dmd_sig_xc = dmd_w//6 - 22
-dmd_err_xc = int(5*dmd_w//6) + 30
+dmd_err_xc = int(5*dmd_w//6) + 32
 
-dmd_err_yc = 614
+dmd_err_yc = 608
 
 dmd_sig_w = int(slm_sig_w * dmd_w/slm_w)
 dmd_sig_h = int(slm_sig_h * dmd_h/slm_h)
@@ -217,13 +217,13 @@ tilt_levels[tilt_levels < 0] += slm_resY_actual
 tilt_vert_column_indices = tilt_vert_column_indices.copy() - tilt_levels[:, cp.newaxis]
 
 # SLM2
-tilt2 = -22
+tilt2 = -24
 tilt2_levels = cp.array([i//tilt2 for i in range(slm2_resY)])
 tilt2_levels[tilt2_levels < 0] += slm2_resX
 tilt2_row_indices, tilt2_column_indices = cp.ogrid[:slm2_resY, :slm2_resX]
 tilt2_column_indices = tilt2_column_indices - tilt2_levels[:, cp.newaxis]
 
-tilt2 = -70
+tilt2 = -62
 tilt2_levels = cp.array([i//tilt2 for i in range(slm2_resX)])
 tilt2_levels[tilt2_levels < 0] += slm2_resY
 tilt2_vert_row_indices, tilt2_vert_column_indices = cp.ogrid[:slm2_resX, :slm2_resY]
