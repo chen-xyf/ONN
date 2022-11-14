@@ -59,21 +59,21 @@ class UeyeCamera(Thread):
             print("is_SetExternalTrigger ERROR")
 
         # set framerate to just above trigger framerate
-        framerate = 70
+        framerate = 140
         actual_fr = ueye.DOUBLE(0.)
         nret = ueye.is_SetFrameRate(self.hCam3, ueye.DOUBLE(framerate), actual_fr)
         if nret != ueye.IS_SUCCESS:
             print("is_SetFrameRate ERROR")
 
         # set exposure time
-        exposure = 5
+        exposure = 20
         nret = ueye.is_Exposure(self.hCam3, ueye.IS_EXPOSURE_CMD_SET_EXPOSURE, ueye.DOUBLE(exposure),
                                 ueye.sizeof(ueye.DOUBLE(exposure)))
         if nret != ueye.IS_SUCCESS:
             print("is_Exposure ERROR")
 
         # set gain
-        gain = 0
+        gain = 100
         nret = ueye.is_SetHardwareGain(self.hCam3, ueye.INT(gain), ueye.INT(gain), ueye.INT(gain), ueye.INT(gain))
         if nret != ueye.IS_SUCCESS:
             print("is_GAIN ERROR")

@@ -23,7 +23,7 @@ slm_h = 775
 slm_x0 = slm_xc-(slm_w//2)
 slm_y0 = slm_yc-(slm_h//2)
 
-slm_sig_xc = slm_resX_actual//6
+slm_sig_xc = 222 #slm_resX_actual//6
 slm_err_xc = int(5*slm_resX_actual//6)
 
 slm_R1_h = 30
@@ -31,10 +31,10 @@ slm_gap = 85
 
 slm_R2_w = 55
 
-slm_sig_w = int(0.5*slm_w/2)-1
+slm_sig_w = 396  # int(0.5*slm_w/2)-1
 slm_sig_h = 490
 
-slm_err_w = slm_sig_w
+slm_err_w = 350  # slm_sig_w
 slm_err_h = slm_sig_h
 
 slm_err_w_rot = 350
@@ -72,20 +72,19 @@ dmd_yc = dmd_resY//2
 dmd_x0 = dmd_xc-(dmd_w//2)
 dmd_y0 = dmd_yc-(dmd_h//2)
 
-dmd_sig_xc = dmd_w//6 - 22
-dmd_err_xc = int(5*dmd_w//6) + 32
+dmd_sig_xc = dmd_w//6 - 31
+dmd_err_xc = int(5*dmd_w//6) + 28
 
 dmd_err_yc = 608
 
-dmd_sig_w = int(slm_sig_w * dmd_w/slm_w)
+dmd_sig_w = 575  # int(slm_sig_w * dmd_w/slm_w)
 dmd_sig_h = int(slm_sig_h * dmd_h/slm_h)
 
+dmd_err_w = int(slm_err_w * dmd_w/slm_w)
+
 dmd_R1_h = int(slm_R1_h * dmd_h/slm_h)
-
 dmd_R2_w = 50
-
 dmd_gap = int(slm_gap * dmd_h/slm_h)
-
 dmd_edge = (dmd_h - (dmd_sig_h+dmd_gap+dmd_R1_h))//2
 
 dmd_s = np.s_[dmd_x0:dmd_x0+dmd_w, dmd_y0:dmd_y0+dmd_h]
@@ -94,13 +93,13 @@ dmd_R1_s = np.s_[dmd_sig_xc-dmd_sig_w//2:dmd_sig_xc+dmd_sig_w//2+1,
                  dmd_y0+dmd_edge+1:dmd_y0+dmd_edge+dmd_R1_h]
 dmd_sig_s = np.s_[dmd_sig_xc-dmd_sig_w//2:dmd_sig_xc+dmd_sig_w//2+1,
                   dmd_y0+dmd_edge+1+dmd_R1_h+dmd_gap:dmd_y0+dmd_h-dmd_edge]
-dmd_err_s = np.s_[dmd_err_xc-dmd_sig_w//2:dmd_err_xc+dmd_sig_w//2+1,
+dmd_err_s = np.s_[dmd_err_xc-dmd_err_w//2:dmd_err_xc+dmd_err_w//2+1,
                   dmd_err_yc-dmd_sig_h//2:dmd_err_yc+dmd_sig_h//2]
 
 # used in code to create batch of dmd images quickly
 dmd_sig_s_multi = np.s_[:, dmd_sig_xc-dmd_sig_w//2:dmd_sig_xc+dmd_sig_w//2+1,
                         dmd_y0+dmd_edge+1+dmd_R1_h+dmd_gap:dmd_y0+dmd_h-dmd_edge, :]
-dmd_err_s_multi = np.s_[:, dmd_err_xc-dmd_sig_w//2:dmd_err_xc+dmd_sig_w//2+1,
+dmd_err_s_multi = np.s_[:, dmd_err_xc-dmd_err_w//2:dmd_err_xc+dmd_err_w//2+1,
                         dmd_err_yc-dmd_sig_h//2:dmd_err_yc+dmd_sig_h//2, :]
 
 dmd_R2_pos_s = np.s_[550:550+dmd_R2_w, dmd_y0+dmd_edge+1+dmd_R1_h+dmd_gap:dmd_y0+dmd_h-dmd_edge]
@@ -173,7 +172,7 @@ gpu_gr2 = cp.asarray(gr2, dtype='float32')
 
 ######################################
 
-phi_sig_corr = np.load("./tools/phi_corr_w1_aug22.npy")
+phi_sig_corr = np.load("./tools/phi_corr_w1_aug22_bigger.npy")
 gpu_phi_sig_corr = cp.array(phi_sig_corr)
 
 phi_err_corr = np.load("./tools/phi_err_w1_aug22.npy")
@@ -197,9 +196,9 @@ uppers_err_2km = np.load("./tools/uppers_err_2km_w1_aug22.npy")
 # gpu_slm_R2_neg_phase_block = cp.array(slm_R2_neg_phase_block)
 
 
-slm_gap_x = 1
+slm_gap_x = 0
 slm_gap_y = 1
-slm2_gap_x = 5
+slm2_gap_x = 2
 slm2_gap_y = 1
 dmd_gaps = True
 
@@ -552,7 +551,7 @@ def make_dmd_batch(vecs, errs=None):
     def find_1d_pattern_err(vec):
         target = vec[cp.newaxis, :].astype(cp.uint8).repeat(dmd_err_block_w + 1, axis=0)
         mask = (target > cp.arange(dmd_err_block_w + 1)[:, cp.newaxis])
-        mapped = cp.zeros((dmd_err_block_w + 1, dmd_sig_w), dtype='bool')
+        mapped = cp.zeros((dmd_err_block_w + 1, dmd_err_w), dtype='bool')
         mapped[ws_err, dmd_xc_shifted_err] = mask
         out = mapped.sum(axis=0).astype(cp.bool)
         return out
@@ -565,11 +564,11 @@ def make_dmd_batch(vecs, errs=None):
     sig_aoi *= 255
     sig_aoi = cp.transpose(sig_aoi, (1, 2, 3, 0))
 
-    outxs = cp.empty((num_frames, dmd_sig_w), dtype='bool')
+    outxs = cp.empty((num_frames, dmd_err_w), dtype='bool')
     for indx, vec in enumerate(errs):
         outxs[indx, :] = find_1d_pattern_err(vec*dmd_err_block_w)
     err_aoi = cp.einsum('eo,eu->eou', outxs, y_blocks_multi_cp_err).astype(cp.bool)
-    err_aoi = err_aoi.reshape((num_frames, dmd_sig_w, dmd_sig_h)).astype(cp.uint8)[None, ...].repeat(3, axis=0)
+    err_aoi = err_aoi.reshape((num_frames, dmd_err_w, dmd_sig_h)).astype(cp.uint8)[None, ...].repeat(3, axis=0)
     err_aoi *= 255
     err_aoi = cp.transpose(err_aoi, (1, 2, 3, 0))
 

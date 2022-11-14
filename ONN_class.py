@@ -55,8 +55,10 @@ class MyONN:
         self.forward = forward
         self.backward = backward
 
-        self.sm_scaling = 5.
+        self.sm_scaling = 1.
 
+        self.od = 2
+        self.thresh = 5
 
         ##### initialise dnn parameters #####
 
@@ -108,8 +110,8 @@ class MyONN:
         self.axsf.set_title('Correct predictions')
         self.correct_scatter = self.axsf.scatter(valx[:, 0], valx[:, 1])
 
-        self.axs3.set_ylim(-3, 3)
-        self.axs4.set_ylim(-3, 3)
+        self.axs3.set_ylim(-6, 6)
+        self.axs4.set_ylim(-8, 8)
         self.axs5.set_ylim(-3, 3)
 
         self.th_line1 = self.axs3.plot(np.zeros(self.m), linestyle='', marker='o', c='b')[0]
@@ -156,6 +158,7 @@ class MyONN:
             self.ctrl.update_slm2(slm2_arr, lut=True)
             time.sleep(0.5)
 
+        init = True
         succeeded = 0
         fail = 0
         while succeeded < 5:
@@ -163,7 +166,7 @@ class MyONN:
             # print(succeeded)
             cp.random.seed(succeeded)
 
-            dmd_vecs = cp.random.normal(0.5, 0.4, (self.ctrl.num_frames, self.n))
+            dmd_vecs = cp.random.normal(0.5, 0.3, (self.ctrl.num_frames, self.n))
             dmd_vecs[:, 0] = 1.  # cp.linspace(0., 1., 5)[succeeded]
             dmd_vecs = cp.clip(dmd_vecs, 0, 1)
             dmd_vecs = (dmd_vecs * self.ctrl.dmd_block_w).astype(cp.int)/self.ctrl.dmd_block_w
@@ -298,8 +301,8 @@ class MyONN:
                           f'ratio3 : {theory_back.std()/error3:.3f}', 'blue'))
 
         self.axs0.cla()
-        low = -2
-        high = 2
+        low = -6
+        high = 6
         self.axs0.set_ylim(low, high)
         self.axs0.set_xlim(low, high)
         self.a1_scatter = self.axs0.plot(theory_a1, meas_a1, linestyle='', marker='x')
@@ -309,8 +312,8 @@ class MyONN:
         self.axs0.set_ylabel('measured')
 
         self.axs1.cla()
-        low = -2
-        high = 2
+        low = -8
+        high = 8
         self.axs1.set_ylim(low, high)
         self.axs1.set_xlim(low, high)
         self.z2_scatter = self.axs1.plot(theory_z2, meas_z2, linestyle='', marker='x')
@@ -320,8 +323,8 @@ class MyONN:
         self.axs1.set_ylabel('measured')
 
         self.axs2.cla()
-        low = -2
-        high = 2
+        low = -3
+        high = 3
         self.axs2.set_ylim(low, high)
         self.axs2.set_xlim(low, high)
         self.back_scatter = self.axs2.plot(theory_back, meas_back, linestyle='', marker='x')
@@ -346,13 +349,25 @@ class MyONN:
         self.ctrl.update_slm2(slm2_arr, lut=True)
         time.sleep(1)
 
+    def activation(self, x, od, thresh):
+        # return x * np.exp(-(od/2)/(1+((x/thresh)**2)))
+        # return np.maximum(0, x)
+        return 1/(1+np.exp(-x))
+
+    def activation_d(self, x, od, thresh):
+        # return np.exp(-(od/2)/(1+(x/thresh)**2))
+        # return np.maximum(0, np.sign(x))
+        return x*(1-x)
 
     def run_batch(self, batch_num):
-
 
         #####################################
         # Start by running only forward MVM #
         #####################################
+
+        self.od = 3
+        self.thresh = 1
+        self.nonlinear = True
 
         xs = self.trainx[self.batch_indxs_list[batch_num], :].copy()
         ys = self.trainy[self.batch_indxs_list[batch_num], :].copy()
@@ -360,7 +375,10 @@ class MyONN:
         self.dnn.xs = xs
         self.dnn.ys = ys
 
-        self.theory_a1 = np.dot(xs, self.dnn.w1) + self.dnn.b1
+        self.theory_z1 = np.dot(xs, self.dnn.w1) + self.dnn.b1
+        self.theory_a1 = self.theory_z1.copy()
+        if self.nonlinear:
+            self.theory_a1 = self.activation(self.theory_z1, self.od, self.thresh)
         self.theory_z2 = np.dot(self.theory_a1, self.dnn.w2.T)
 
         if self.forward == 'digital':
@@ -427,6 +445,12 @@ class MyONN:
         self.dnn.a2_delta = self.dnn.a2_delta/np.abs(self.dnn.a2_delta).max()
 
         self.theory_back = np.dot(self.dnn.a2_delta, self.dnn.w2)
+        if self.nonlinear:
+            self.theory_back *= self.activation_d(self.dnn.a1.copy(), self.od, self.thresh)
+
+        # z1_delta = np.dot(a2_delta, self.w2.T)
+        # if self.nonlinear:
+        #     a1_delta = z1_delta * relu_d(self.a1)  # w1
 
         if self.backward == 'digital':
             self.dnn.a1_delta = self.theory_back.copy()
@@ -482,9 +506,13 @@ class MyONN:
 
         self.dnn.update_weights()
 
-        self.dnn.w1 = np.clip(self.dnn.w1.copy(), -1, 1)
-        self.dnn.w2 = np.clip(self.dnn.w2.copy(), -1, 1)
-        self.dnn.b1 = np.clip(self.dnn.b1.copy(), -1, 1)
+        # self.dnn.w1 = np.clip(self.dnn.w1.copy(), -1, 1)
+        # self.dnn.w2 = np.clip(self.dnn.w2.copy(), -1, 1)
+        # self.dnn.b1 = np.clip(self.dnn.b1.copy(), -1, 1)
+
+        # self.dnn.w1 /= self.dnn.w1.max()
+        # self.dnn.w2 /= self.dnn.w2.max()
+        # self.dnn.b1 /= self.dnn.b1.max()
 
         if self.forward == 'optical':
 

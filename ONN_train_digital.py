@@ -7,56 +7,143 @@ from datetime import datetime
 import os
 import matplotlib.pyplot as plt
 from tqdm import trange
+from sklearn import datasets
+from skimage.transform import rescale, resize
 
 ################################
 # Classification problem data  #
 ################################
 
-x, y = make_classification(n_samples=500, n_features=2, n_informative=2, n_redundant=0, n_repeated=0, n_classes=3,
-                           n_clusters_per_class=1, weights=None, flip_y=0.01, class_sep=1.0, hypercube=True, shift=0.0,
-                           scale=1.0, shuffle=True, random_state=6)
+# x, y = make_classification(n_samples=500, n_features=25, n_informative=20, n_redundant=5, n_repeated=0, n_classes=5,
+#                            n_clusters_per_class=1, weights=None, flip_y=0.01, class_sep=2.0, hypercube=True, shift=0.0,
+#                            scale=1.0, shuffle=True, random_state=0)
+#
+# y_onehot = np.zeros((500, 5))
+# for i in range(500):
+#     y_onehot[i, int(y[i])] = 1
+# trainy = y_onehot[:400, :].copy()
+# valy = y_onehot[400:500, :].copy()
+# # testy = y_onehot[500:, :].copy()
+# testy = None
+#
+# xnorm = x.copy()
+# for i in range(25):
+#     xnorm[:, i] -= xnorm[:, i].min()
+#     xnorm[:, i] *= 1./xnorm[:, i].max()
+# trainx = xnorm[:400, :].copy()
+# valx = xnorm[400:500, :].copy()
+# # testx = xnorm[500:, :].copy()
+# testx = None
 
-y_onehot = np.zeros((500, 3))
+########################
+# Digits problem data  #
+########################
+
+# x, y = datasets.load_digits(n_class=3, return_X_y=True)
+#
+# rng = np.random.default_rng(0)
+# rng.shuffle(x)
+# rng = np.random.default_rng(0)
+# rng.shuffle(y)
+#
+# x = x[:500]
+# y = y[:500]
+#
+# x = np.array([resize(x[i].reshape((8, 8)), (5, 5)).reshape(25) for i in range(500)])
+#
+# y_onehot = np.zeros((500, 3))
+# for i in range(500):
+#     y_onehot[i, int(y[i])] = 1
+# trainy = y_onehot[:400, :].copy()
+# valy = y_onehot[400:, :].copy()
+#
+# trainx = x[:400, :].copy()/16
+# valx = x[400:, :].copy()/16
+
+#################################
+# Moons nonlinear problem data  #
+#################################
+
+#x, y = datasets.make_circles(n_samples=500, shuffle=True, noise=0., random_state=0)
+#
+# for i in range(2):
+#     x[:, i] -= x[:, i].min()
+#     x[:, i] /= x[:, i].max()
+#
+# # np.random.seed(0)
+# # x[:166, 0] = np.random.normal(0.2, 0.05, 166)
+# # np.random.seed(1)
+# # x[:166, 1] = np.random.normal(0.2, 0.1, 166)
+#
+# x = 1 - x
+# x = np.clip(x, 0, 1)
+#
+# # y[:166] = 2
+
+x, y = datasets.make_moons(n_samples=500, shuffle=False, noise=0.05, random_state=0)
+
+for i in range(2):
+    x[:, i] -= x[:, i].min()
+    x[:, i] /= x[:, i].max()
+
+# x[:, 1] = 1-x[:, 1]
+#
+# x[:250, :] = 1
+#
+# for i in range(2):
+#     x[:, i] -= x[:, i].min()
+#     x[:, i] /= x[:, i].max()
+#
+# np.random.seed(0)
+# x[:250, 0] = np.random.normal(0.5, 0.1, 250)
+# np.random.seed(1)
+# x[:250, 1] = np.random.normal(0.3, 0.1, 250)
+
+
+x = np.clip(x, 0, 1)
+
+
+# y[:250] = 2
+
+rng = np.random.default_rng(0)
+rng.shuffle(x)
+rng = np.random.default_rng(0)
+rng.shuffle(y)
+
+y_onehot = np.zeros((500, 2))
 for i in range(500):
     y_onehot[i, int(y[i])] = 1
 trainy = y_onehot[:400, :].copy()
-valy = y_onehot[400:500, :].copy()
-# testy = y_onehot[500:, :].copy()
-testy = None
+valy = y_onehot[400:, :].copy()
 
-xnorm = x.copy()
-xnorm[:, 0] -= xnorm[:, 0].min()
-xnorm[:, 0] *= 1./xnorm[:, 0].max()
-xnorm[:, 1] -= xnorm[:, 1].min()
-xnorm[:, 1] *= 1./xnorm[:, 1].max()
-trainx = xnorm[:400, :].copy()
-valx = xnorm[400:500, :].copy()
-# testx = xnorm[500:, :].copy()
-testx = None
+trainx = x[:400, :].copy()
+valx = x[400:, :].copy()
 
 #######################
 # Network parameters  #
 #######################
 
-n, m, k = 3, 10, 3
+n, m, k = 3, 50, 2
 
-batch_size = 40
-num_batches = 10
-num_epochs = 20
-lr = 0.01
+batch_size = 8
+num_batches = 50
+num_epochs = 150
+lr = 0.005
 
-np.random.seed(0)
+np.random.seed(1)
 
 slm_arr = np.random.normal(0, 0.5, (n, m))
 slm_arr = np.clip(slm_arr, -1, 1)
 slm_arr = (slm_arr*64).astype(np.int)/64
+
+slm_arr[0, :] = 0.1
 
 slm2_arr = np.random.normal(0, 0.5, (k, m))
 slm2_arr = np.clip(slm2_arr, -1, 1)
 slm2_arr = (slm2_arr*64).astype(np.int)/64
 
 today_date = datetime.today().strftime('%Y-%m-%d')
-save_folder = 'D:/ONN_backprop/'+today_date+'/digital_run_1/'
+save_folder = 'D:/ONN_backprop/'+today_date+'/digital_temp/'
 
 # if os.path.exists(save_folder+'NOTES.txt'):
 #     print('Folder already exists!')
@@ -83,16 +170,16 @@ onn = MyONN(batch_size=batch_size, num_batches=num_batches, num_epochs=num_epoch
             w1_0=slm_arr[1:, :], w2_0=slm2_arr, b1_0=slm_arr[0, :],
             lr=lr, dimensions=(n, m, k),
             save_folder=save_folder,
-            trainx=trainx, valx=valx, testx=testx,
-            trainy=trainy, valy=valy, testy=testy,
+            trainx=trainx, valx=valx, testx=None,
+            trainy=trainy, valy=valy, testy=None,
             forward='digital', backward='digital')
 
-onn.run_validation(0)
+# onn.run_validation(0)
 
 print('Epoch  Loss   Time   Accuracy')
 time.sleep(0.2)
 
-for epoch in range(1, num_epochs+1):
+for epoch in range(num_epochs):
 
     rng = np.random.default_rng(epoch)
     epoch_rand_indxs = np.arange(onn.trainx.shape[0])

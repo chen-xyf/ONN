@@ -146,8 +146,12 @@ class Controller:
 
         self.dmd_block_w, self.dmd_err_block_w = update_params(self.n, self.m, self.k, self.num_frames)
 
-        ampl_lut_slm1 = np.load("./tools/ampl_lut.npy")
+        ampl_lut_slm1 = np.load("./tools/ampl_lut_26x26.npy")
+        # ampl_lut_slm1 = np.repeat(ampl_lut_slm1, 3, axis=1)
+        # cols_del = np.linspace(0, 29, 5).astype(int)
+        # ampl_lut_slm1 = np.delete(ampl_lut_slm1, cols_del, axis=1)
         self.gpu_ampl_lut_slm1 = cp.array(ampl_lut_slm1, dtype=cp.float16)
+
         ampl_lut_slm2 = np.load("./tools/ampl_lut_2.npy")
         self.gpu_ampl_lut_slm2 = cp.array(ampl_lut_slm2, dtype=cp.float16)
 
@@ -200,6 +204,9 @@ class Controller:
         self.ampls3 = None
         self.d2s = None
         self.norm_params3 = None
+
+        self.marker_frame = make_dmd_batch(cp.ones((self.num_frames, self.n)),
+                                           cp.ones((self.num_frames, self.k)))[0]
 
         self.init_dmd()
 
@@ -269,6 +276,7 @@ class Controller:
     def run_batch(self, vecs_in, errs_in=None):
 
         self.target_frames = cp.zeros((self.num_frames+3, 1080, 1920, 4), dtype=cp.uint8)
+        self.target_frames[0, :, :, :-1] = self.marker_frame
         self.target_frames[1:-2, :, :, :-1] = make_dmd_batch(vecs_in, errs_in)
         self.target_frames[..., -1] = 255
 
@@ -284,7 +292,7 @@ class Controller:
         self.capture2.ampls = []
 
         app.run(clock=self.dmd_clock, framerate=0, framecount=self.fc)
-        time.sleep(0.1)
+        time.sleep(0.15)
 
         self.frames3 = np.array(self.capture3.frames)
         self.frames1 = np.array(self.capture1.frames)
@@ -293,7 +301,6 @@ class Controller:
         self.ampls3 = np.array(self.capture3.ampls)
         self.ampls1 = np.array(self.capture1.ampls)
         self.ampls2 = np.array(self.capture2.ampls)
-
 
         return
 
@@ -358,6 +365,9 @@ class Controller:
         checklist_ampls = {}
         checklist_frames = {}
 
+        # lim = {'a1': 0.1, 'z2': 0.2, 'back': 0.1}
+        lim = {'a1': 1., 'z2': 1., 'back': 1.}
+
         if a1:
             checklist_ampls['a1'] = self.ampls1
             checklist_frames['a1'] = self.frames1
@@ -377,29 +387,38 @@ class Controller:
             # print(key, ":")
             # print(maxs)
 
-            if maxs[0] > 0.1:
+            if maxs[0] > lim[key]:
                 print(colored('frames out of sync ^', 'red'))
                 error = 'sync '
                 # print(maxs)
                 success = False
-            elif maxs[-1] > 0.1:
+            elif maxs[-1] > lim[key]:
                 print(colored('frames out of sync ^', 'red'))
                 error = 'sync '
                 # print(maxs)
                 success = False
             else:
-                start = (maxs > 0.1).argmax()
-                end = maxs.shape[0] - np.flip((maxs > 0.1)).argmax()
+                start = (maxs > lim[key]).argmax()
 
-                if not calib:
-                    if key == 'a1':
-                        a1_start = start
-                        a1_end = end
-                    if key == 'back':
-                        # back_start = start
-                        # back_end = end
-                        start = a1_start
-                        end = a1_end
+                maxs = maxs[start:]
+                diffs = np.abs(np.diff(maxs))
+                start1 = (diffs > 0.1).argmax()
+
+                # end = maxs.shape[0] - np.flip((maxs > lim[key])).argmax()
+                # start += 1
+                # end -= 1
+
+                # if key == 'a1':
+                #     a1_start = start
+                #     a1_end = end
+                # if key == 'back':
+                #     if end - start != self.num_frames:
+                #         print(colored(f'wrong num frames, using 10 ^', 'red'))
+                #         # start = a1_start
+                #         end = start+10 #a1_end
+
+                start += start1 + 1
+                end = start + self.num_frames
 
                 ampls = ampls[start:end, :]
                 frames = frames[start:end, ...]

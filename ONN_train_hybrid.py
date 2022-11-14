@@ -6,45 +6,68 @@ from sklearn.datasets import make_classification
 from datetime import datetime
 import os
 from tqdm import trange
+from sklearn import datasets
+from skimage.transform import rescale, resize
 
 
 ################################
 # Classification problem data  #
 ################################
 
-x, y = make_classification(n_samples=500, n_features=2, n_informative=2, n_redundant=0, n_repeated=0, n_classes=3,
-                           n_clusters_per_class=1, weights=None, flip_y=0.01, class_sep=1.0, hypercube=True, shift=0.0,
-                           scale=1.0, shuffle=True, random_state=6)
+# x, y = make_classification(n_samples=500, n_features=2, n_informative=2, n_redundant=0, n_repeated=0, n_classes=3,
+#                            n_clusters_per_class=1, weights=None, flip_y=0.01, class_sep=1.0, hypercube=True, shift=0.0,
+#                            scale=1.0, shuffle=True, random_state=6)
+#
+# y_onehot = np.zeros((500, 3))
+#
+# for i in range(500):
+#     y_onehot[i, int(y[i])] = 1
+#
+# trainy = y_onehot[:400, :].copy()
+# valy = y_onehot[400:, :].copy()
+# # testy = y_onehot[500:, :].copy()
+#
+# xnorm = x.copy()
+# xnorm[:, 0] -= xnorm[:, 0].min()
+# xnorm[:, 0] *= 1./xnorm[:, 0].max()
+# xnorm[:, 1] -= xnorm[:, 1].min()
+# xnorm[:, 1] *= 1./xnorm[:, 1].max()
+#
+# trainx = xnorm[:400, :].copy()
+# valx = xnorm[400:, :].copy()
+# # testx = xnorm[500:, :].copy()
+
+x, y = datasets.load_digits(n_class=3, return_X_y=True)
+
+rng = np.random.default_rng(10)
+rng.shuffle(x)
+rng = np.random.default_rng(10)
+rng.shuffle(y)
+
+x = x[:500]
+y = y[:500]
+
+x = np.array([resize(x[i].reshape((8, 8)), (5, 5)).reshape(25) for i in range(500)])
 
 y_onehot = np.zeros((500, 3))
-
 for i in range(500):
     y_onehot[i, int(y[i])] = 1
-
 trainy = y_onehot[:400, :].copy()
 valy = y_onehot[400:, :].copy()
-# testy = y_onehot[500:, :].copy()
 
-xnorm = x.copy()
-xnorm[:, 0] -= xnorm[:, 0].min()
-xnorm[:, 0] *= 1./xnorm[:, 0].max()
-xnorm[:, 1] -= xnorm[:, 1].min()
-xnorm[:, 1] *= 1./xnorm[:, 1].max()
-
-trainx = xnorm[:400, :].copy()
-valx = xnorm[400:, :].copy()
-# testx = xnorm[500:, :].copy()
+trainx = x[:400, :].copy()/16
+valx = x[400:, :].copy()/16
 
 #######################
 # Network parameters  #
 #######################
 
-n, m, k = 3, 10, 3
+n, m, k = 26, 10, 3
 
 batch_size = 40
 num_batches = 10
-num_epochs = 20
-lr = 0.01
+num_epochs = 15
+lr = 0.005
 
 np.random.seed(0)
 
@@ -57,7 +80,7 @@ slm2_arr = np.clip(slm2_arr, -1, 1)
 slm2_arr = (slm2_arr*64).astype(np.int)/64
 
 today_date = datetime.today().strftime('%Y-%m-%d')
-save_folder = 'D:/ONN_backprop/'+today_date+'/hybrid_run_3/'
+save_folder = 'D:/ONN_backprop/'+today_date+'/hybrid_digits2/'
 #
 if os.path.exists(save_folder+'NOTES.txt'):
     print('Folder already exists!')
@@ -101,9 +124,6 @@ time.sleep(0.2)
 
 for epoch in range(num_epochs):
 
-    if epoch > 0:
-        onn.run_calibration(initial=False)
-
     rng = np.random.default_rng(epoch*100)
     epoch_rand_indxs = np.arange(onn.trainx.shape[0])
     rng.shuffle(epoch_rand_indxs)
@@ -136,10 +156,10 @@ for epoch in range(num_epochs):
             np.save(onn.save_folder+f'validation/best_w2s/w2_epoch{epoch}.npy',
                     onn.dnn.w2)
 
-            onn.run_calibration(initial=False)
+            # onn.run_calibration(initial=False)
 
-            if epoch == num_epochs - 1:
-                onn.run_validation(epoch, test_or_val='test')
+            # if epoch == num_epochs - 1:
+            #     onn.run_validation(epoch, test_or_val='test')
 
             onn.run_validation(epoch, test_or_val='val')
             t.set_description(f"{epoch:2d}"+" "*6+f"{onn.loss[-1]:.3f}"+" "*2+f"{dt:.3f}"
