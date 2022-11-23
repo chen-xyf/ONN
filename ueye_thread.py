@@ -5,6 +5,7 @@ from scipy import ndimage
 from pyueye import ueye
 from threading import Thread
 import cv2
+from collections import deque
 
 
 class UeyeCamera(Thread):
@@ -23,10 +24,11 @@ class UeyeCamera(Thread):
             print("is_SetColorMode ERROR")
 
         # set AOI
-        fr_x1 = 1476
-        fr_y1 = 906
-        self.fr_w = 800
-        self.fr_h = 190
+        fr_x1 = 1532
+        fr_y1 = 992
+        self.fr_w = 720
+        self.fr_h = 86
+
         rect_aoi = ueye.IS_RECT()
         rect_aoi.s32X = ueye.int(fr_x1)
         rect_aoi.s32Y = ueye.int(fr_y1)
@@ -59,21 +61,21 @@ class UeyeCamera(Thread):
             print("is_SetExternalTrigger ERROR")
 
         # set framerate to just above trigger framerate
-        framerate = 140
+        framerate = 70
         actual_fr = ueye.DOUBLE(0.)
         nret = ueye.is_SetFrameRate(self.hCam3, ueye.DOUBLE(framerate), actual_fr)
         if nret != ueye.IS_SUCCESS:
             print("is_SetFrameRate ERROR")
 
         # set exposure time
-        exposure = 20
+        exposure = 10
         nret = ueye.is_Exposure(self.hCam3, ueye.IS_EXPOSURE_CMD_SET_EXPOSURE, ueye.DOUBLE(exposure),
                                 ueye.sizeof(ueye.DOUBLE(exposure)))
         if nret != ueye.IS_SUCCESS:
             print("is_Exposure ERROR")
 
         # set gain
-        gain = 100
+        gain = 10
         nret = ueye.is_SetHardwareGain(self.hCam3, ueye.INT(gain), ueye.INT(gain), ueye.INT(gain), ueye.INT(gain))
         if nret != ueye.IS_SUCCESS:
             print("is_GAIN ERROR")
@@ -118,17 +120,20 @@ class UeyeCamera(Thread):
         if nret != ueye.IS_SUCCESS:
             print("is_CaptureVideo ERROR")
 
-        self.frames = []
-        self.ampls = []
+        self.raw_frames = deque(maxlen=300)
+        self.raw_markers = deque(maxlen=300)
+        self.ampls = None
+        self.values = None
+        self.norm_params = None
         self.daemon = True
         self.t0 = time.perf_counter()
         self.t1 = time.perf_counter()
 
-        spot_indxs = np.load("C:/Users/spall/OneDrive - Nexus365/Code/JS/PycharmProjects/ONN/tools/spot_indxs2.npy")
-        self.y_center = spot_indxs[-1]
-        self.spot_indxs = spot_indxs[:-1]
-        self.k = k
-        self.area_width = self.spot_indxs.shape[0]//k
+        # spot_indxs = np.load("C:/Users/spall/OneDrive - Nexus365/Code/JS/PycharmProjects/ONN/tools/spot_indxs2.npy")
+        # self.y_center = spot_indxs[-1]
+        # self.spot_indxs = spot_indxs[:-1]
+        # self.k = k
+        # self.area_width = self.spot_indxs.shape[0]//k
 
         self.live = live
 
@@ -149,25 +154,27 @@ class UeyeCamera(Thread):
     def process(self, data):
 
         frame = np.reshape(data, (self.fr_h, self.fr_w, 3))[..., 0].astype(np.uint8)
-        frame = ndimage.rotate(frame, 8.6, reshape=False).T
-        frame = frame[:, 90:125]
-        mask = frame < 3
-        frame -= 2
-        frame[mask] = 0
+        frame = ndimage.rotate(frame, 0.1, reshape=False)
+        # frame = frame[:, 90:125]
+        # mask = frame < 2
+        # frame -= 1
+        # frame[mask] = 0
 
-        self.frames.append(frame.T)
-        self.frames = self.frames[-20:]
+        self.raw_frames.append(frame)
+        # self.frames = self.frames[-20:]
 
-        if self.live:
-            cv2.imshow('ueye', frame.T)
-            cv2.waitKey(5)
+        self.raw_markers.append(frame[:, 600:700].mean())
 
-        spots = frame[self.spot_indxs, self.y_center-2:self.y_center+3].copy()
-        powers = spots.reshape((self.k, self.area_width, 5)).mean(axis=(1, 2))
-        ampls = np.sqrt(powers)
+        # if self.live:
+        #     cv2.imshow('ueye', frame.T)
+        #     cv2.waitKey(5)
 
-        self.ampls.append(ampls)
-        self.ampls = self.ampls[-20:]
+        # spots = frame[self.spot_indxs, self.y_center-2:self.y_center+2].copy()
+        # powers = spots.reshape((self.k, self.area_width, 4)).mean(axis=(1, 2))
+        # ampls = np.sqrt(powers)
+        #
+        # self.ampls.append(ampls)
+        # self.ampls = self.ampls[-20:]
 
         # self.t1 = time.perf_counter()
         # print(f'{self.t1 - self.t0:.4f}')

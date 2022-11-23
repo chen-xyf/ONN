@@ -23,7 +23,7 @@ slm_h = 775
 slm_x0 = slm_xc-(slm_w//2)
 slm_y0 = slm_yc-(slm_h//2)
 
-slm_sig_xc = 222 #slm_resX_actual//6
+slm_sig_xc = 222
 slm_err_xc = int(5*slm_resX_actual//6)
 
 slm_R1_h = 30
@@ -31,14 +31,14 @@ slm_gap = 85
 
 slm_R2_w = 55
 
-slm_sig_w = 396  # int(0.5*slm_w/2)-1
-slm_sig_h = 490
+slm_sig_w = 396
+slm_sig_h = 390
 
-slm_err_w = 350  # slm_sig_w
+slm_err_w = 350
 slm_err_h = slm_sig_h
 
 slm_err_w_rot = 350
-slm_err_h_rot = 490
+slm_err_h_rot = 390
 
 slm_edge = (slm_h - (slm_sig_h+slm_gap+slm_R1_h))//2
 slm_edge_err = (slm_h - (slm_err_h_rot+slm_gap+slm_R1_h))//2
@@ -46,9 +46,9 @@ slm_edge_err = (slm_h - (slm_err_h_rot+slm_gap+slm_R1_h))//2
 slm_s = np.s_[slm_x0:slm_x0+slm_w, slm_y0:slm_y0+slm_h]
 
 slm_R1_s = np.s_[slm_sig_xc-slm_sig_w//2:slm_sig_xc+slm_sig_w//2,
-                 slm_y0+slm_edge:slm_y0+slm_edge+slm_R1_h]
+                 420+slm_sig_h:420+slm_sig_h+slm_R1_h]
 slm_sig_s = np.s_[slm_sig_xc-slm_sig_w//2:slm_sig_xc+slm_sig_w//2,
-                  slm_y0+slm_edge+slm_R1_h+slm_gap:slm_y0+slm_h-slm_edge]
+                  388:388+slm_sig_h]
 slm_err_s = np.s_[slm_err_xc-slm_err_w_rot//2:slm_err_xc+slm_err_w_rot//2,
                   slm_y0+slm_edge_err+slm_R1_h+slm_gap:slm_y0+slm_h-slm_edge_err]
 
@@ -72,13 +72,13 @@ dmd_yc = dmd_resY//2
 dmd_x0 = dmd_xc-(dmd_w//2)
 dmd_y0 = dmd_yc-(dmd_h//2)
 
-dmd_sig_xc = dmd_w//6 - 31
+dmd_sig_xc = dmd_w//6 - 20
 dmd_err_xc = int(5*dmd_w//6) + 28
 
 dmd_err_yc = 608
 
-dmd_sig_w = 575  # int(slm_sig_w * dmd_w/slm_w)
-dmd_sig_h = int(slm_sig_h * dmd_h/slm_h)
+dmd_sig_w = 587
+dmd_sig_h = int(slm_sig_h * dmd_h/slm_h)-1
 
 dmd_err_w = int(slm_err_w * dmd_w/slm_w)
 
@@ -89,8 +89,7 @@ dmd_edge = (dmd_h - (dmd_sig_h+dmd_gap+dmd_R1_h))//2
 
 dmd_s = np.s_[dmd_x0:dmd_x0+dmd_w, dmd_y0:dmd_y0+dmd_h]
 
-dmd_R1_s = np.s_[dmd_sig_xc-dmd_sig_w//2:dmd_sig_xc+dmd_sig_w//2+1,
-                 dmd_y0+dmd_edge+1:dmd_y0+dmd_edge+dmd_R1_h]
+dmd_R1_s = np.s_[920:920+dmd_R1_h, dmd_sig_xc-dmd_sig_w//2:dmd_sig_xc+dmd_sig_w//2+1, :]
 dmd_sig_s = np.s_[dmd_sig_xc-dmd_sig_w//2:dmd_sig_xc+dmd_sig_w//2+1,
                   dmd_y0+dmd_edge+1+dmd_R1_h+dmd_gap:dmd_y0+dmd_h-dmd_edge]
 dmd_err_s = np.s_[dmd_err_xc-dmd_err_w//2:dmd_err_xc+dmd_err_w//2+1,
@@ -116,17 +115,19 @@ slm2_resY = 1152
 slm2_w = 1920
 slm2_h = 1152
 
-slm2_xc = 1063
-slm2_yc = 310
+slm2_xc = 1104
+slm2_yc = 322
 
-slm2_sig_w = 394
-slm2_sig_h = 552
+slm2_sig_w = 250
+slm2_sig_h = 440
 
 slm2_R1_h = 1
 slm2_R1_y0 = 0
 
 slm2_sig_s = np.s_[slm2_xc-slm2_sig_w//2:slm2_xc+slm2_sig_w//2, slm2_yc-slm2_sig_h//2:slm2_yc+slm2_sig_h//2]
 slm2_R1_s = np.s_[slm2_xc-slm2_sig_w//2:slm2_xc+slm2_sig_w//2, slm2_R1_y0:slm2_R1_y0+slm2_R1_h]
+
+
 
 ######################################
 
@@ -150,9 +151,10 @@ gr = 2*np.pi*(-X+Y)/(10+1e-5)
 gpu_gr = cp.asarray(gr, dtype='float32')
 
 slm_wf = np.load("./tools/slm_wf.npy")
-
 gpu_slm_wf = cp.array(slm_wf)
 
+slm2_wf = np.load("./tools/slm2_wf.npy").T
+gpu_slm2_wf = cp.array(slm2_wf)
 
 def gpu_arcsinc(y):
     z = 1.*(1-y)
@@ -172,7 +174,7 @@ gpu_gr2 = cp.asarray(gr2, dtype='float32')
 
 ######################################
 
-phi_sig_corr = np.load("./tools/phi_corr_w1_aug22_bigger.npy")
+phi_sig_corr = np.load("./tools/phi_corr_w1_nov03_smallbeam.npy")
 gpu_phi_sig_corr = cp.array(phi_sig_corr)
 
 phi_err_corr = np.load("./tools/phi_err_w1_aug22.npy")
@@ -182,8 +184,10 @@ gpu_phi_err_corr = cp.array(phi_err_corr)
 
 uppers_err_2km = np.load("./tools/uppers_err_2km_w1_aug22.npy")
 
-# phi_arr_corr_2 = np.load("./tools/phi_corr_2.npy")
-# gpu_phi_sig_corr_2 = cp.array(phi_arr_corr_2)
+phi_sig_corr_2 = np.load("./tools/phi_corr_2.npy")
+phi_sig_corr_2 = np.flip(phi_sig_corr_2, axis=0)
+phi_sig_corr_2 = np.flip(phi_sig_corr_2, axis=1)
+gpu_phi_sig_corr_2 = cp.array(phi_sig_corr_2)
 
 # uppers_w2_mk = np.load("./tools/uppers_w2_mk_aug22.npy")
 
@@ -196,10 +200,10 @@ uppers_err_2km = np.load("./tools/uppers_err_2km_w1_aug22.npy")
 # gpu_slm_R2_neg_phase_block = cp.array(slm_R2_neg_phase_block)
 
 
-slm_gap_x = 0
-slm_gap_y = 1
-slm2_gap_x = 2
-slm2_gap_y = 1
+slm_gap_x = 5
+slm_gap_y = 2
+slm2_gap_x = 10
+slm2_gap_y = 4
 dmd_gaps = True
 
 # SLM1 error
@@ -293,7 +297,7 @@ def update_params(_n, _m, _k, _num_frames):
 
     if dmd_gaps:
         dmd_block_w = int((slm_block_w-2) * .9 * dmd_w / slm_w)
-        dmd_block_h = int((slm_block_h-1) * .75 * dmd_h / slm_h)
+        dmd_block_h = int((slm_block_h-1) * .45 * dmd_h / slm_h)
     else:
         dmd_block_w = int(slm_block_w * dmd_w / slm_w)
         dmd_block_h = int(slm_block_h * dmd_h / slm_h)
@@ -335,7 +339,7 @@ def update_params(_n, _m, _k, _num_frames):
 
     if dmd_gaps:
         dmd_err_block_w = int((slm_err_block_w-2) * .9 * dmd_w / slm_w)
-        dmd_err_block_h = int((slm_err_block_h-1) * .75 * dmd_h / slm_h)
+        dmd_err_block_h = int((slm_err_block_h-1) * .45 * dmd_h / slm_h)
     else:
         dmd_err_block_w = int((slm_err_block_w-2) * dmd_w / slm_w)
         dmd_err_block_h = int((slm_err_block_h-2) * dmd_w / slm_w)
@@ -367,7 +371,7 @@ def update_params(_n, _m, _k, _num_frames):
     err_phi_aoi = np.delete(err_phi_aoi, err_cols_to_del, 0)
     err_phi_aoi = np.delete(err_phi_aoi, err_rows_to_del, 1)
 
-    err_a = np.ones((2*k, m))*1. * uppers_err_2km.copy()
+    err_a = np.ones((2*k, m))*1. # * uppers_err_2km.copy()
     # err_a[0, :] = 0.1
     # err_a[:, 1] = 0.1
     err_a = np.flip(err_a, axis=0)
@@ -414,8 +418,10 @@ def make_slm1_rgb(target_a, target_phi):
     gpu_a[slm_sig_s] = a_aoi
     gpu_phi[slm_sig_s] = phi_aoi + gpu_phi_sig_corr
 
+    gpu_a[slm_R1_s] = 1.
+
     gpu_a[slm_err_s] = gpu_err_a_aoi
-    gpu_phi[slm_err_s] = gpu_err_phi_aoi + gpu_phi_err_corr
+    gpu_phi[slm_err_s] = gpu_err_phi_aoi #+ gpu_phi_err_corr
 
     # gpu_a[slm_R2_pos_s] = 0.55  # to balance pos and neg
     # gpu_phi[slm_R2_pos_s] = gpu_slm_R2_pos_phase_block
@@ -497,9 +503,12 @@ def make_slm2_rgb(target_a, target_phi):
 
     gpu_a = cp.zeros((slm2_resX, slm2_resY), dtype='float32')
     gpu_phi = cp.zeros((slm2_resX, slm2_resY), dtype='float32')
+    gpu_phi += gpu_slm2_wf.copy()
 
     gpu_a[slm2_sig_s] = a_aoi
-    gpu_phi[slm2_sig_s] = phi_aoi #+ gpu_phi_sig_corr_2
+    gpu_phi[slm2_sig_s] += phi_aoi + gpu_phi_sig_corr_2.copy()
+
+    gpu_a[879:929, 40:70] = 1.
 
     gpu_a = gpu_a[tilt2_column_indices, tilt2_row_indices].T
     gpu_phi = gpu_phi[tilt2_column_indices, tilt2_row_indices].T
@@ -524,12 +533,21 @@ def make_slm2_rgb(target_a, target_phi):
     return gpu_gl
 
 
-def make_dmd_batch(vecs, errs=None):
+def make_dmd_batch(vecs, errs=None, marker=False):
+
+    if marker:
+        imgs = cp.zeros((1080, 1920, 3), dtype=cp.uint8)
+        imgs[dmd_R1_s] = 255
+
+        imgs = cp.flip(imgs, axis=0)
+        imgs = cp.flip(imgs, axis=1)
+
+        return imgs
 
     if errs is None:
         errs = cp.zeros((num_frames, 2*k))
 
-    if errs.shape[1] == k:
+    elif errs.shape[1] == k:
         errs = cp.repeat(errs, 2, axis=1)
         errs[:, ::2] *= (errs[:, ::2] < 0).astype(cp.int)
         errs[:, 1::2] *= (errs[:, 1::2] > 0).astype(cp.int)

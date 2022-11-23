@@ -1,11 +1,20 @@
 import numpy as np
 
+
 def relu(x):
     return np.maximum(0, x)
 
 
 def relu_d(x):
     return np.maximum(0, np.sign(x))
+
+
+def satab(x, od, thresh):
+    return np.exp(-(od/2)/(1+(x/thresh)**2)) * x
+
+
+def satab_d(x, od, thresh):
+    return np.exp(-(od/2)/(1+(x/thresh)**2))
 
 
 def softmax(x):
@@ -37,9 +46,19 @@ def accuracy(pred, label):
     perc = correct * 100 / pred.shape[0]
     return perc
 
+
+def sigmoid(x):
+    return 1/(1+np.exp(-x))
+
+
+def bce(py, y):
+    sums = -1*y*np.log(py) - (1-y)*np.log(1-py)
+    return sums.sum(axis=0)/py.shape[0]
+
+
 class DNN_backprop:
 
-    def __init__(self, w1_0, w2_0, b1_0, lr, *adam_args):
+    def __init__(self, w1_0, w2_0, b1_0, lr, scaling, *adam_args):
 
         self.xs = None
         self.ys = None
@@ -50,9 +69,10 @@ class DNN_backprop:
         self.t = 1
 
         # parameters for onn
-        self.w1, self.w2, self.b1, self.lr = w1_0, w2_0, b1_0, lr
+        self.w1, self.w2, self.b1, self.lr, self.scaling = w1_0, w2_0, b1_0, lr, scaling
 
         # vectors
+        self.z1 = None
         self.a1 = None
         self.z2 = None
         self.a2 = None
@@ -93,12 +113,13 @@ class DNN_backprop:
 
 
 class DNN:
-    def __init__(self, *adam_args, x, y, w1_0, w2_0, batch_size, num_batches, lr=0.001, nonlinear=False):
+    def __init__(self, *adam_args, x, y, w1_0, w2_0, batch_size, num_batches, lr=0.001, scaling=1., nonlinear=False):
         self.x = x
         self.y = y
         self.num_batches = num_batches
         self.batch_size = batch_size
         self.lr = lr
+        self.scaling = scaling
         self.loss = []
         ip_dim = w1_0.shape[0]
         hl_dim = w1_0.shape[1]
@@ -127,7 +148,7 @@ class DNN:
 
         # self.z2 /= 10000
 
-        self.a2 = softmax(self.z2)
+        self.a2 = softmax(self.z2*self.scaling)
 
         # print(self.z2.min(), self.z2.max())
         # print(self.a2.min(), self.a2.max())

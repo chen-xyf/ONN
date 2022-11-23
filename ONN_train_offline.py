@@ -110,7 +110,7 @@ onn = MyONN(batch_size=batch_size, num_batches=num_batches, num_epochs=num_epoch
             forward='optical', backward='digital')
 
 
-onn.run_calibration(initial=True)
+onn.run_calibration_linear(initial=True)
 onn.init_weights()
 
 # onn.run_validation(99)

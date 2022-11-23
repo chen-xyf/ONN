@@ -1,4 +1,5 @@
-from ANN import DNN, DNN_1d, accuracy, softmax, error, DNN_backprop
+from ANN import DNN, DNN_1d, accuracy, softmax, sigmoid, bce, error
+from ANN import DNN_backprop, satab, satab_d
 import matplotlib.pyplot as plt
 import random
 from termcolor import colored
@@ -9,18 +10,20 @@ from scipy.io import loadmat
 from termcolor import colored
 from glumpy.app import clock
 from ONN_config import Controller
+from scipy.optimize import curve_fit
+import pyautogui
 from datetime import datetime
 
 
 class MyONN:
 
-    def __init__(self, batch_size, num_batches, num_epochs, w1_0, w2_0, b1_0, lr, dimensions, save_folder,
-                 trainx=None, valx=None, testx=None,
-                 trainy=None, valy=None, testy=None,
+    def __init__(self, batch_size, num_batches, num_epochs, w1_0, w2_0, b1_0, lr, scaling,
+                 dimensions, save_folder,
+                 trainx=None, trainy=None, testx=None, testy=None,
                  forward='digital', backward='digital'):
 
         if forward == 'optical':
-            self.ctrl = Controller(*dimensions)
+            self.ctrl = Controller(*dimensions, _num_frames=batch_size, use_pylons=True, use_ueye=True)
 
         self.n = dimensions[0]
         self.m = dimensions[1]
@@ -43,11 +46,18 @@ class MyONN:
         self.best_b1 = b1_0
 
         self.trainx = trainx
-        self.valx = valx
         self.testx = testx
         self.trainy = trainy
-        self.valy = valy
         self.testy = testy
+
+        self.res = 20
+        low = 0.
+        high = 1.
+        gridx1 = np.linspace(low, high, self.res).repeat(self.res)
+        gridx2 = np.tile(np.linspace(low, high, self.res), self.res)
+        self.gridx = np.empty((self.res**2, 2))*0.
+        self.gridx[:, 0] = gridx1
+        self.gridx[:, 1] = gridx2
 
         self.batch_indxs_list = None
         self.save_folder = save_folder
@@ -55,10 +65,7 @@ class MyONN:
         self.forward = forward
         self.backward = backward
 
-        self.sm_scaling = 1.
-
-        self.od = 2
-        self.thresh = 5
+        self.sm_scaling = scaling
 
         ##### initialise dnn parameters #####
 
@@ -68,15 +75,15 @@ class MyONN:
         m_db1 = np.zeros(self.m)
         v_db1 = np.zeros(self.m)
 
-        m_dw2 = np.zeros((self.m, self.k))
-        v_dw2 = np.zeros((self.m, self.k))
+        m_dw2 = np.zeros((self.m, 2))
+        v_dw2 = np.zeros((self.m, 2))
 
         beta1 = 0.9
         beta2 = 0.999
 
         adam_params = (m_dw1, v_dw1, m_db1, v_db1, m_dw2, v_dw2, beta1, beta2)
 
-        self.dnn = DNN_backprop(w1_0, w2_0, b1_0, lr, *adam_params)
+        self.dnn = DNN_backprop(w1_0, w2_0, b1_0, lr, scaling, *adam_params)
 
         plt.ion()
         plt.show()
@@ -85,17 +92,21 @@ class MyONN:
                     [self.axs3, self.axs4, self.axs5, self.axsb, self.axse],
                     [self.axs6, self.axs7, self.axs8, self.axsc, self.axsf]] = plt.subplots(3, 5, figsize=(24, 12))
 
+        mngr = plt.get_current_fig_manager()
+        mngr.window.setGeometry(1920, 0, 1920, 1080)
+        mngr.window.showMaximized()
+
         self.axsa.set_title('Loss')
-        self.axsa.set_xlim(0, self.num_batches*self.num_epochs)
-        self.axsa.set_ylim(0, 0.6)
+        self.axsa.set_xlim(0, self.num_epochs*self.num_batches)
+        self.axsa.set_ylim(0, 0.5)
 
         self.axsb.set_title('Accuracy')
         self.axsb.set_xlim(0, self.num_epochs)
         self.axsb.set_ylim(0, 100)
 
         self.axsc.set_title('Errors')
-        self.axsc.set_xlim(0, self.num_batches*self.num_epochs)
-        self.axsc.set_ylim(0, 0.5)
+        self.axsc.set_xlim(0, self.num_epochs*self.num_batches)
+        self.axsc.set_ylim(0, 0.1)
 
         self.loss_plot = self.axsa.plot(self.loss, linestyle='-', marker='', c='b')
         self.accs_plot = self.axsb.plot(self.accs, linestyle='-', marker='x', c='b')
@@ -103,239 +114,517 @@ class MyONN:
         self.err2_plot = self.axsc.plot(self.errors2, linestyle='-', marker='', c='g')
         self.err3_plot = self.axsc.plot(self.errors3, linestyle='-', marker='', c='b')
 
-        self.axsd.set_title('Test actual classes')
-        self.label_scatter = self.axsd.scatter(valx[:, 0], valx[:, 1], c=valy.argmax(axis=1))
-        self.axse.set_title('Test prediction classes')
-        self.pred_scatter = self.axse.scatter(valx[:, 0], valx[:, 1])
-        self.axsf.set_title('Correct predictions')
-        self.correct_scatter = self.axsf.scatter(valx[:, 0], valx[:, 1])
+        # self.axsd.set_title('Test actual classes')
+        # self.label_scatter = self.axsd.scatter(valx[:, 0], valx[:, 1], c=valy.argmax(axis=1))
+        # self.axse.set_title('Test prediction classes')
+        # self.pred_scatter = self.axse.scatter(valx[:, 0], valx[:, 1])
+        # self.axsf.set_title('Correct predictions')
+        # self.correct_scatter = self.axsf.scatter(valx[:, 0], valx[:, 1])
 
-        self.axs3.set_ylim(-6, 6)
-        self.axs4.set_ylim(-8, 8)
+        self.axs3.set_ylim(-3, 3)
+        self.axs4.set_ylim(-3, 3)
         self.axs5.set_ylim(-3, 3)
 
         self.th_line1 = self.axs3.plot(np.zeros(self.m), linestyle='', marker='o', c='b')[0]
         self.meas_line1 = self.axs3.plot(np.zeros(self.m), linestyle='', marker='x', c='r')[0]
 
-        self.th_line2 = self.axs4.plot(np.zeros(self.k), linestyle='', marker='o', c='b')[0]
-        self.meas_line2 = self.axs4.plot(np.zeros(self.k), linestyle='', marker='x', c='r')[0]
-        self.label_line2 = self.axs4.plot(np.zeros(self.k), linestyle='', marker='o', c='g')[0]
-        self.softmax_line2 = self.axs4.plot(np.zeros(self.k), linestyle='', marker='x', c='orange')[0]
+        # self.th_line2 = self.axs4.plot(np.zeros(5), linestyle='', marker='o', c='b')[0]
+        # self.meas_line2 = self.axs4.plot(np.zeros(5), linestyle='', marker='x', c='r')[0]
+        # self.label_line2 = self.axs4.plot(np.zeros(self.k), linestyle='', marker='o', c='g')[0]
+        # self.softmax_line2 = self.axs4.plot(np.zeros(self.k), linestyle='', marker='x', c='orange')[0]
 
         self.th_line3 = self.axs5.plot(np.zeros(self.m), linestyle='', marker='o', c='b')[0]
         self.meas_line3 = self.axs5.plot(np.zeros(self.m), linestyle='', marker='x', c='r')[0]
 
         self.img1 = self.axs6.imshow(np.zeros((80, 672)), aspect='auto', vmin=0, vmax=255)
-        self.img2 = self.axs7.imshow(np.zeros((90, 808)), aspect='auto', vmin=0, vmax=255)
+        self.img2 = self.axs7.imshow(np.zeros((86, 720)), aspect='auto', vmin=0, vmax=255)
         self.img3 = self.axs8.imshow(np.zeros((80, 672)), aspect='auto', vmin=0, vmax=255)
 
+        self.od, self.thresh = np.load("./tools/satab_params.npy")
+        self.norm_params1 = np.load("./tools/calibration/norm_params1.npy ")
+        self.norm_params2 = np.load("./tools/calibration/norm_params2.npy")[2:4, :]
+
+        self.theory_a1 = np.load("./tools/calibration/theory_a1.npy")
+        self.meas_a1 = np.load("./tools/calibration/meas_a1.npy")
+        self.theory_z2 = np.load("./tools/calibration/theory_z2.npy")[:, 2:4]
+        self.meas_z2 = np.load("./tools/calibration/meas_z2.npy")[:, 2:4]
+
+        self.axs0.cla()
+        low = -3
+        high = 3
+        self.axs0.set_ylim(low, high)
+        self.axs0.set_xlim(low, high)
+        self.a1_scatter = self.axs0.plot(self.theory_a1, self.meas_a1, linestyle='', marker='x')
+        self.axs0.plot([low, high], [low, high], c='black', linewidth=1)
+        self.axs0.set_title('layer 1')
+        self.axs0.set_xlabel('theory')
+        self.axs0.set_ylabel('measured')
+
+        xs = np.linspace(low, high, 100)
+        gs = satab(xs, self.od, self.thresh)
+        self.axs0.plot(xs, gs, c='black', linewidth=1)
+
+        self.axs1.cla()
+        low = -2
+        high = 2
+        self.axs1.set_ylim(low, high)
+        self.axs1.set_xlim(low, high)
+        # self.z2_scatter = self.axs1.plot(self.theory_z2, self.meas_z2, linestyle='', marker='x')
+        self.axs1.plot([low, high], [low, high], c='black', linewidth=1)
+        self.axs1.set_title('layer 2')
+        self.axs1.set_xlabel('theory')
+        self.axs1.set_ylabel('measured')
+
+        plt.tight_layout()
+
         plt.draw()
-        plt.pause(2)
+        # plt.pause(2)
+        # plt.show()
 
         self.loop_clock.tick()
 
-    def run_calibration(self, initial):
+    def case10_dmd(self, seed):
+        cp.random.seed(seed)
 
-        meass_a1 = []
-        theorys_a1 = []
-        meass_z2 = []
-        theorys_z2 = []
-        meass_back = []
-        theorys_back = []
+        # stds = cp.random.uniform(0., 1., self.ctrl.num_frames)
+        # means = cp.random.uniform(0.3, 0.7, self.ctrl.num_frames)
+        # dmd_vec = cp.zeros((self.ctrl.num_frames, self.n), dtype=cp.uint8)
+        # for j in range(self.ctrl.num_frames):
+        #     dmd_vec[j, :] = cp.random.normal(means[j], stds[j], self.n)
 
-        if not initial:
-            slm_arr = cp.empty((self.n, self.m))
-            slm_arr[1:, :] = cp.array(self.dnn.w1.copy())
-            slm_arr[0, :] = cp.array(self.dnn.b1.copy())
-            slm_arr = cp.clip(slm_arr, -1, 1)
-            slm_arr = (slm_arr*64).astype(cp.int)/64
+        dmd_vec = cp.zeros((self.ctrl.num_frames, self.n), dtype=cp.float16)
+        for j in range(self.ctrl.num_frames):
+            dmd_vec[j, :] = cp.random.normal(0.5, 0.4, self.n)
 
-            slm2_arr = cp.array(self.dnn.w2.copy())
-            slm2_arr = cp.clip(slm2_arr, -1, 1)
-            slm2_arr = (slm2_arr*64).astype(cp.int)/64
+        dmd_vec = cp.clip(dmd_vec, 0., 1.)
+        dmd_vec = (dmd_vec*self.ctrl.dmd_block_w).astype(cp.int)/self.ctrl.dmd_block_w
 
+        # dmd_vec *= 0.
+        # dmd_vec += 1.
+
+        # dmd_vec = cp.linspace(0., 1., self.ctrl.num_frames)[:, None].repeat(self.n, axis=-1)
+
+        return dmd_vec
+
+    def case10_slm(self, seed):
+        cp.random.seed(seed*100)
+        slm_arr = cp.zeros((self.n, self.m), dtype=cp.float32)
+        stds = cp.random.uniform(0., 1., self.m)
+        means = cp.random.uniform(-1., 1., self.m)
+        for j in range(self.m):
+            slm_arr[:, j] = cp.random.normal(means[j], stds[j], self.n)
+
+        # slm_arr = cp.random.normal(0., 0.5, (self.n, self.m))
+
+        slm_arr = cp.clip(slm_arr, -1., 1.)
+        slm_arr = (slm_arr*256).astype(cp.int)/256
+
+        # slm_arr *= 0.
+        # slm_arr += 1.
+
+        return slm_arr
+
+    def case10_slm2(self, seed):
+
+        cp.random.seed(seed*1000)
+        slm2_arr = cp.random.normal(0., 0.2, (k, m))
+        slm2_arr = cp.clip(slm2_arr, -1., 1.)
+        slm2_arr = (slm2_arr*64).astype(cp.int)/64
+
+        # slm2_arr *= 0.
+        # slm2_arr += 1.
+
+        return slm2_arr
+
+    def wait_for_user(self, message, pos=19):
+        print(colored(message, 'yellow'))
+        input("Press enter to continue...")
+        pyautogui.click(4500+(pos*37), 1425)
+        time.sleep(0.1)
+        pyautogui.click(4500+(pos*37)+94, 1424-79)
+        time.sleep(0.1)
+        self.ctrl.dmd_run_blanks()
+
+    def run_calibration_linear(self):
+
+        num = 30
+
+        raw_z1s = []
+        theory_z1s = []
+        raw_z2s = []
+        theory_z2s = []
+
+        slm_arr = cp.ones((self.n, self.m))
+        self.ctrl.update_slm1(slm_arr, lut=True)
+        slm2_arr = cp.ones((self.k, self.m))
+        self.ctrl.update_slm2(slm2_arr, lut=True)
+        self.ctrl.dmd_run_blanks(on=True)
+
+        self.wait_for_user("Tune off resonance")
+
+        successful = 0
+
+        for seed in range(num):
+
+            print(seed)
+
+            slm_arr = self.case10_slm(seed)
             self.ctrl.update_slm1(slm_arr, lut=True)
+
+            slm2_arr = self.case10_slm2(seed)
             self.ctrl.update_slm2(slm2_arr, lut=True)
+
             time.sleep(0.5)
 
-        init = True
-        succeeded = 0
-        fail = 0
-        while succeeded < 5:
+            dmd_vecs = self.case10_dmd(seed)
+            self.ctrl.run_batch(dmd_vecs)
 
-            # print(succeeded)
-            cp.random.seed(succeeded)
-
-            dmd_vecs = cp.random.normal(0.5, 0.3, (self.ctrl.num_frames, self.n))
-            dmd_vecs[:, 0] = 1.  # cp.linspace(0., 1., 5)[succeeded]
-            dmd_vecs = cp.clip(dmd_vecs, 0, 1)
-            dmd_vecs = (dmd_vecs * self.ctrl.dmd_block_w).astype(cp.int)/self.ctrl.dmd_block_w
-
-            dmd_errs = cp.random.normal(0., 0.5, (self.ctrl.num_frames, self.k))
-            dmd_errs = cp.clip(dmd_errs, -1, 1)
-            dmd_errs = (dmd_errs*self.ctrl.dmd_err_block_w).astype(cp.int)/self.ctrl.dmd_err_block_w
-
-            if initial:
-                slm_arr = cp.random.normal(0, 0.5, (self.n, self.m))
-                slm_arr = cp.clip(slm_arr, -1, 1)
-                slm_arr = (slm_arr*64).astype(cp.int)/64
-
-                slm2_arr = cp.random.normal(0, 0.5, (self.k, self.m))
-                slm2_arr = cp.clip(slm2_arr, -1, 1)
-                slm2_arr = (slm2_arr*64).astype(cp.int)/64
-
-                self.ctrl.update_slm1(slm_arr, lut=True)
-                self.ctrl.update_slm2(slm2_arr, lut=True)
-
-                time.sleep(0.5)
-
-            self.ctrl.run_batch(dmd_vecs, dmd_errs)
-            success, err = self.ctrl.check_ampls(calib=True)
-            time.sleep(0.1)
+            success = self.ctrl.captures['a1'].success and self.ctrl.captures['z2'].success
 
             if success:
-                meas_a1 = self.ctrl.ampls1.copy()
-                theory_a1 = cp.dot(dmd_vecs, slm_arr)
+                print('batch successful')
+                successful += 1
 
-                meas_z2 = self.ctrl.ampls2.copy()
-                theory_z2 = cp.dot(theory_a1, slm2_arr.T)
+                ampls = self.ctrl.captures['a1'].ampls
+                self.axs2.cla()
+                for j in range(10):
+                    self.axs2.plot(ampls[:, j], linestyle='', marker='x')
+                plt.pause(0.1)
 
-                meas_back = self.ctrl.ampls3.copy()
-                theory_back = cp.dot(dmd_errs, slm2_arr)
+                raw_z1 = self.ctrl.captures['a1'].ampls.copy()
+                theory_z1 = cp.dot(dmd_vecs, slm_arr)
 
-                theory_a1 = theory_a1.get()
+                raw_z2 = self.ctrl.captures['z2'].ampls.copy()
+                theory_z2 = cp.dot(theory_z1, slm2_arr.T)
+
+                theory_z1 = theory_z1.get()
                 theory_z2 = theory_z2.get()
-                theory_back = theory_back.get()
 
-                # if not initial:
-                #     meas_a1 = self.ctrl.normalise_ampls(ampls=meas_a1, norm_params=self.ctrl.norm_params1)
-                #     meas_z2 = self.ctrl.normalise_ampls(ampls=meas_z2, norm_params=self.ctrl.norm_params2)
-                #     meas_back = self.ctrl.normalise_ampls(ampls=meas_back, norm_params=self.ctrl.norm_params3)
-                    # meas_a1 *= np.sign(theory_a1)
-                    # meas_z2 *= np.sign(theory_z2)
-                    # meas_back *= np.sign(theory_back)
+                raw_z1s.append(raw_z1)
+                theory_z1s.append(theory_z1)
+                raw_z2s.append(raw_z2)
+                theory_z2s.append(theory_z2)
 
-                meass_a1.append(meas_a1)
-                theorys_a1.append(theory_a1)
-                meass_z2.append(meas_z2)
-                theorys_z2.append(theory_z2)
-                meass_back.append(meas_back)
-                theorys_back.append(theory_back)
+                self.img1.set_array(self.ctrl.captures['a1'].frames[0])
+                self.img2.set_array(self.ctrl.captures['z2'].frames[0])
 
-                self.img1.set_array(self.ctrl.frames1[0])
-                self.img2.set_array(self.ctrl.frames2[0])
-                self.img3.set_array(self.ctrl.frames3[0])
+                theory_z1_plot = np.abs(theory_z1[0, :].copy())
+                theory_z1_plot -= theory_z1_plot.mean()
+                theory_z1_plot /= theory_z1_plot.std()
+                raw_z1_plot = raw_z1[0, :].copy()
+                raw_z1_plot -= raw_z1_plot.mean()
+                raw_z1_plot /= raw_z1_plot.std()
 
-                theory_a1_plot = np.abs(theory_a1[0, :].copy())
-                theory_a1_plot -= theory_a1_plot.mean()
-                theory_a1_plot /= theory_a1_plot.std()
-                meas_a1_plot = meas_a1[0, :].copy()
-                meas_a1_plot -= meas_a1_plot.mean()
-                meas_a1_plot /= meas_a1_plot.std()
-                self.th_line1.set_ydata(theory_a1_plot)
-                self.meas_line1.set_ydata(meas_a1_plot)
+                self.th_line1.set_ydata(theory_z1_plot)
+                self.meas_line1.set_ydata(raw_z1_plot)
 
                 theory_z2_plot = np.abs(theory_z2[0, :].copy())
                 theory_z2_plot -= theory_z2_plot.mean()
                 theory_z2_plot /= theory_z2_plot.std()
-                meas_z2_plot = meas_z2[0, :].copy()
-                meas_z2_plot -= meas_z2_plot.mean()
-                meas_z2_plot /= meas_z2_plot.std()
-                self.th_line2.set_ydata(theory_z2_plot)
-                self.meas_line2.set_ydata(meas_z2_plot)
+                raw_z2_plot = raw_z2[0, :].copy()
+                raw_z2_plot -= raw_z2_plot.mean()
+                raw_z2_plot /= raw_z2_plot.std()
 
-                theory_back_plot = np.abs(theory_back[0, :].copy())
-                theory_back_plot -= theory_back_plot.mean()
-                theory_back_plot /= theory_back_plot.std()
-                meas_back_plot = meas_back[0, :].copy()
-                meas_back_plot -= meas_back_plot.mean()
-                meas_back_plot /= meas_back_plot.std()
-                self.th_line3.set_ydata(theory_back_plot)
-                self.meas_line3.set_ydata(meas_back_plot)
+                # self.th_line2.set_ydata(theory_z2_plot)
+                # self.meas_line2.set_ydata(raw_z2_plot)
 
-                plt.pause(0.01)
-                succeeded += 1
+                plt.pause(0.1)
 
-            else:
-                fail += 1
-                if fail == 3:
-                    fail = 0
-                    continue
+            print()
 
-        meas_a1 = np.array(meass_a1).reshape(succeeded * self.ctrl.num_frames, self.m)
-        theory_a1 = np.array(theorys_a1).reshape(succeeded * self.ctrl.num_frames, self.m)
-        meas_z2 = np.array(meass_z2).reshape(succeeded * self.ctrl.num_frames, self.k)
-        theory_z2 = np.array(theorys_z2).reshape(succeeded * self.ctrl.num_frames, self.k)
-        meas_back = np.array(meass_back).reshape(succeeded * self.ctrl.num_frames, self.m)
-        theory_back = np.array(theorys_back).reshape(succeeded * self.ctrl.num_frames, self.m)
+        raw_z1 = np.array(raw_z1s).reshape(successful * self.ctrl.num_frames, self.m)
+        theory_z1 = np.array(theory_z1s).reshape(successful * self.ctrl.num_frames, self.m)
+        meas_z1 = raw_z1 * np.sign(theory_z1)
+        norm_params1 = self.ctrl.find_norm_params(theory_z1, meas_z1)
+        meas_z1 = (meas_z1 - norm_params1[:, 1].copy()) / norm_params1[:, 0].copy()
 
-        # if initial:
-        self.ctrl.norm_params1 = self.ctrl.find_norm_params(theory_a1, meas_a1)
-        self.ctrl.norm_params2 = self.ctrl.find_norm_params(theory_z2, meas_z2)
-        self.ctrl.norm_params3 = self.ctrl.find_norm_params(theory_back, meas_back)
+        raw_z2 = np.array(raw_z2s).reshape(successful * self.ctrl.num_frames, self.k)
+        theory_z2 = np.array(theory_z2s).reshape(successful * self.ctrl.num_frames, self.k)
+        meas_z2 = raw_z2 * np.sign(theory_z2)
+        norm_params2 = self.ctrl.find_norm_params(theory_z2, meas_z2)
+        meas_z2 = (meas_z2 - norm_params2[:, 1].copy()) / norm_params2[:, 0].copy()
 
-        meas_a1 = (meas_a1 - self.ctrl.norm_params1[:, 1].copy()) / self.ctrl.norm_params1[:, 0].copy()
-        meas_z2 = (meas_z2 - self.ctrl.norm_params2[:, 1].copy()) / self.ctrl.norm_params2[:, 0].copy()
-        meas_back = (meas_back - self.ctrl.norm_params3[:, 1].copy()) / self.ctrl.norm_params3[:, 0].copy()
-
-        meas_a1 *= np.sign(theory_a1)
-        meas_z2 *= np.sign(theory_z2)
-        meas_back *= np.sign(theory_back)
-
-        # if not initial:
-        #     self.ctrl.norm_params1 = self.ctrl.update_norm_params(theory_a1, meas_a1, self.ctrl.norm_params1)
-        #     self.ctrl.norm_params2 = self.ctrl.update_norm_params(theory_z2, meas_z2, self.ctrl.norm_params2)
-        #     self.ctrl.norm_params3 = self.ctrl.update_norm_params(theory_back, meas_back, self.ctrl.norm_params3)
-
-
-        error1 = (meas_a1 - theory_a1).std()
+        error1 = (meas_z1 - theory_z1).std()
         error2 = (meas_z2 - theory_z2).std()
-        error3 = (meas_back - theory_back).std()
 
-        if initial:
-            print(colored(f'error1 : {error1:.3f}, signal1 : {theory_a1.std():.3f}, '
-                          f'ratio1 : {theory_a1.std()/error1:.3f}', 'blue'))
-            print(colored(f'error2 : {error2:.3f}, signal2 : {theory_z2.std():.3f}, '
-                          f'ratio2 : {theory_z2.std()/error2:.3f}', 'blue'))
-            print(colored(f'error3 : {error3:.3f}, signal3 : {theory_back.std():.3f}, '
-                          f'ratio3 : {theory_back.std()/error3:.3f}', 'blue'))
+        print(colored(f'error1 : {error1:.3f}, signal1 : {theory_z1.std():.3f}, '
+                      f'ratio1 : {theory_z1.std()/error1:.3f}', 'blue'))
+        print(colored(f'error2 : {error2:.3f}, signal2 : {theory_z2.std():.3f}, '
+                      f'ratio2 : {theory_z2.std()/error2:.3f}', 'blue'))
 
         self.axs0.cla()
-        low = -6
-        high = 6
+        low = -3
+        high = 3
         self.axs0.set_ylim(low, high)
         self.axs0.set_xlim(low, high)
-        self.a1_scatter = self.axs0.plot(theory_a1, meas_a1, linestyle='', marker='x')
+        self.axs0.plot(theory_z1, meas_z1, linestyle='', marker='x')
         self.axs0.plot([low, high], [low, high], c='black', linewidth=1)
         self.axs0.set_title('layer 1')
         self.axs0.set_xlabel('theory')
         self.axs0.set_ylabel('measured')
 
         self.axs1.cla()
-        low = -8
-        high = 8
+        low = -10
+        high = 10
         self.axs1.set_ylim(low, high)
         self.axs1.set_xlim(low, high)
-        self.z2_scatter = self.axs1.plot(theory_z2, meas_z2, linestyle='', marker='x')
+        self.axs1.plot(theory_z2, meas_z2, linestyle='', marker='x')
         self.axs1.plot([low, high], [low, high], c='black', linewidth=1)
         self.axs1.set_title('layer 2')
         self.axs1.set_xlabel('theory')
         self.axs1.set_ylabel('measured')
 
-        self.axs2.cla()
+        plt.pause(0.1)
+        plt.show()
+
+        np.save("./tools/calibration/raw_z1.npy", raw_z1)
+        np.save("./tools/calibration/meas_z1.npy", meas_z1)
+        np.save("./tools/calibration/theory_z1.npy", theory_z1)
+        np.save("./tools/calibration/norm_params1.npy", norm_params1)
+
+    def run_calibration_nonlinear_layer1(self):
+
+        num = 30
+
+        slm_arr = cp.ones((self.n, self.m))
+        self.ctrl.update_slm1(slm_arr, lut=True)
+        self.ctrl.dmd_run_blanks(on=True)
+
+        self.wait_for_user("Tune on resonance")
+
+        raw_a1s = []
+
+        for seed in range(num):
+
+            print(seed)
+
+            slm_arr = self.case10_slm(seed)
+            self.ctrl.update_slm1(slm_arr, lut=True)
+
+            time.sleep(0.5)
+
+            dmd_vecs = self.case10_dmd(seed)
+            self.ctrl.run_batch(dmd_vecs)
+
+            success = self.ctrl.captures['a1'].success
+
+            if success:
+                print('batch successful')
+
+                ampls = self.ctrl.captures['a1'].ampls
+                self.axs2.cla()
+                for j in range(10):
+                    self.axs2.plot(ampls[:, j], linestyle='', marker='x')
+                plt.pause(0.1)
+
+                raw_a1 = self.ctrl.captures['a1'].ampls.copy()
+                raw_a1s.append(raw_a1)
+
+                plt.pause(0.01)
+
+        raw_a1 = np.array(raw_a1s).reshape(num * self.ctrl.num_frames, self.m)
+
+        meas_z1 = np.load("./tools/calibration/meas_z1.npy")
+        theory_z1 = np.load("./tools/calibration/theory_z1.npy")
+        norm_params1 = np.load("./tools/calibration/norm_params1.npy")
+
+        meas_a1 = (raw_a1 - norm_params1[:, 1].copy()) / norm_params1[:, 0].copy()
+        meas_a1 *= np.sign(theory_z1)
+
+        od_fit, thresh_fit = curve_fit(satab, theory_z1.flatten(), meas_a1.flatten(), p0=[1,1], sigma=None,
+                                       absolute_sigma=False, check_finite=True, bounds=([0,0],[1000,10]),
+                                       method=None, jac=None)[0]
+
+        np.save("./tools/satab_params.npy", np.array([od_fit, thresh_fit]))
+
+        print(colored(f"optical depth: {od_fit:.2f}, threshold: {thresh_fit:.2f}"), 'green')
+
+        self.axs0.cla()
         low = -3
         high = 3
-        self.axs2.set_ylim(low, high)
-        self.axs2.set_xlim(low, high)
-        self.back_scatter = self.axs2.plot(theory_back, meas_back, linestyle='', marker='x')
-        self.axs2.plot([low, high], [low, high], c='black', linewidth=1)
-        self.axs2.set_title('backprop')
-        self.axs2.set_xlabel('theory')
-        self.axs2.set_ylabel('measured')
+        self.axs0.set_ylim(low, high)
+        self.axs0.set_xlim(low, high)
+        self.axs0.plot(theory_z1, meas_z1, linestyle='', marker='x')
+        self.axs0.plot(theory_z1, meas_a1, linestyle='', marker='x')
+        self.axs0.plot([low, high], [low, high], c='black', linewidth=1)
+        self.axs0.set_title('layer 1')
+        self.axs0.set_xlabel('theory')
+        self.axs0.set_ylabel('measured')
+
+        xs = np.linspace(low, high, 100)
+        gs = satab(xs, od_fit, thresh_fit)
+        self.axs0.plot(xs, gs, c='black', linewidth=1)
+
+        theory_a1 = satab(theory_z1, od_fit, thresh_fit)
+
+        error1 = (meas_a1 - theory_a1).std()
+
+        print(colored(f'error1 : {error1:.3f}, signal1 : {theory_a1.std():.3f}, '
+                      f'ratio1 : {theory_a1.std()/error1:.3f}', 'blue'))
+
+        plt.pause(0.1)
+        plt.show()
+
+        input('Press enter to continue...')
+
+    def run_calibration_nonlinear_layer2(self):
+
+        num = 30
+
+        raw_a1s = []
+        theory_a1s = []
+        raw_z2s = []
+        theory_z2s = []
+
+        od_fit, thresh_fit = np.load("./tools/satab_params.npy")
+
+        slm_arr = cp.ones((self.n, self.m))
+        self.ctrl.update_slm1(slm_arr, lut=True)
+        slm2_arr = cp.ones((self.k, self.m))
+        self.ctrl.update_slm2(slm2_arr, lut=True)
+        self.ctrl.dmd_run_blanks(on=True)
+
+        self.wait_for_user("Tune on resonance")
+
+        successful = 0
+
+        for seed in range(num):
+
+            print(seed)
+
+            slm_arr = self.case10_slm(seed)
+            self.ctrl.update_slm1(slm_arr, lut=True)
+
+            slm2_arr = self.case10_slm2(seed)
+            self.ctrl.update_slm2(slm2_arr, lut=True)
+
+            time.sleep(0.5)
+
+            dmd_vecs = self.case10_dmd(seed)
+            self.ctrl.run_batch(dmd_vecs)
+
+            success = self.ctrl.captures['a1'].success and self.ctrl.captures['z2'].success
+
+            if success:
+                print('batch successful')
+                successful += 1
+
+                ampls = self.ctrl.captures['a1'].ampls
+                self.axs2.cla()
+                for j in range(10):
+                    self.axs2.plot(ampls[:, j], linestyle='', marker='x')
+                plt.pause(0.1)
+
+                raw_a1 = self.ctrl.captures['a1'].ampls.copy()
+                theory_z1 = cp.dot(dmd_vecs, slm_arr)
+                theory_a1 = satab(theory_z1, od_fit, thresh_fit)
+
+                raw_z2 = self.ctrl.captures['z2'].ampls.copy()
+                theory_z2 = cp.dot(theory_a1, slm2_arr.T)
+
+                theory_z1 = theory_z1.get()
+                theory_a1 = theory_a1.get()
+                theory_z2 = theory_z2.get()
+
+                raw_a1s.append(raw_a1)
+                theory_a1s.append(theory_z1)
+                raw_z2s.append(raw_z2)
+                theory_z2s.append(theory_z2)
+
+                self.img1.set_array(self.ctrl.captures['a1'].frames[0])
+                self.img2.set_array(self.ctrl.captures['z2'].frames[0])
+
+                theory_a1_plot = np.abs(theory_a1[0, :].copy())
+                theory_a1_plot -= theory_a1_plot.mean()
+                theory_a1_plot /= theory_a1_plot.std()
+                raw_a1_plot = raw_a1[0, :].copy()
+                raw_a1_plot -= raw_a1_plot.mean()
+                raw_a1_plot /= raw_a1_plot.std()
+
+                self.th_line1.set_ydata(theory_a1_plot)
+                self.meas_line1.set_ydata(raw_a1_plot)
+
+                theory_z2_plot = np.abs(theory_z2[0, :].copy())
+                theory_z2_plot -= theory_z2_plot.mean()
+                theory_z2_plot /= theory_z2_plot.std()
+                raw_z2_plot = raw_z2[0, :].copy()
+                raw_z2_plot -= raw_z2_plot.mean()
+                raw_z2_plot /= raw_z2_plot.std()
+
+                self.th_line2.set_ydata(theory_z2_plot)
+                self.meas_line2.set_ydata(raw_z2_plot)
+
+                plt.pause(0.1)
+
+            print()
+
+        meas_z1 = np.load("./tools/calibration/meas_z1.npy")
+        theory_z1 = np.load("./tools/calibration/theory_z1.npy")
+        norm_params1 = np.load("./tools/calibration/norm_params1.npy")
+
+        raw_a1 = np.array(raw_a1s).reshape(successful * self.ctrl.num_frames, self.m)
+        theory_a1 = np.array(theory_a1s).reshape(successful * self.ctrl.num_frames, self.m)
+        meas_a1 = raw_a1 * np.sign(theory_a1)
+        meas_a1 = (meas_a1 - norm_params1[:, 1].copy()) / norm_params1[:, 0].copy()
+
+        raw_z2 = np.array(raw_z2s).reshape(successful * self.ctrl.num_frames, self.k)
+        theory_z2 = np.array(theory_z2s).reshape(successful * self.ctrl.num_frames, self.k)
+        meas_z2 = raw_z2 * np.sign(theory_z2)
+        norm_params2 = self.ctrl.find_norm_params(theory_z2, meas_z2)
+        meas_z2 = (meas_z2 - norm_params2[:, 1].copy()) / norm_params2[:, 0].copy()
+
+        error1 = (meas_a1 - theory_a1).std()
+        error2 = (meas_z2 - theory_z2).std()
+
+        print(colored(f'error1 : {error1:.3f}, signal1 : {theory_a1.std():.3f}, '
+                      f'ratio1 : {theory_a1.std()/error1:.3f}', 'blue'))
+        print(colored(f'error2 : {error2:.3f}, signal2 : {theory_z2.std():.3f}, '
+                      f'ratio2 : {theory_z2.std()/error2:.3f}', 'blue'))
+
+        self.axs0.cla()
+        low = -3
+        high = 3
+        self.axs0.set_ylim(low, high)
+        self.axs0.set_xlim(low, high)
+        self.axs0.plot(theory_z1, meas_z1, linestyle='', marker='x')
+        self.axs0.plot(theory_z1, meas_a1, linestyle='', marker='x')
+        self.axs0.plot([low, high], [low, high], c='black', linewidth=1)
+        self.axs0.set_title('layer 1')
+        self.axs0.set_xlabel('theory')
+        self.axs0.set_ylabel('measured')
+
+        xs = np.linspace(low, high, 100)
+        gs = satab(xs, od_fit, thresh_fit)
+        self.axs0.plot(xs, gs, c='black', linewidth=1)
+
+        self.axs1.cla()
+        low = -10
+        high = 10
+        self.axs1.set_ylim(low, high)
+        self.axs1.set_xlim(low, high)
+        self.axs1.plot(theory_z2, meas_z2, linestyle='', marker='x')
+        self.axs1.plot([low, high], [low, high], c='black', linewidth=1)
+        self.axs1.set_title('layer 2')
+        self.axs1.set_xlabel('theory')
+        self.axs1.set_ylabel('measured')
+
+        plt.pause(0.1)
+        plt.show()
+
+        np.save("./tools/calibration/raw_a1.npy", raw_a1)
+        np.save("./tools/calibration/meas_a1.npy", meas_a1)
+        np.save("./tools/calibration/theory_a1.npy", theory_a1)
+
+        np.save("./tools/calibration/raw_z2.npy", raw_z2)
+        np.save("./tools/calibration/meas_z2.npy", meas_z2)
+        np.save("./tools/calibration/theory_z2.npy", theory_z2)
+        np.save("./tools/calibration/norm_params2.npy", norm_params2)
 
         plt.draw()
-        # plt.pause(1)
+        plt.pause(1)
         plt.show()
+
+        input('Press enter to continue...')
 
     def init_weights(self):
 
@@ -343,31 +632,18 @@ class MyONN:
         slm_arr[1:, :] = cp.array(self.dnn.w1.copy())
         slm_arr[0, :] = cp.array(self.dnn.b1.copy())
 
-        slm2_arr = cp.array(self.dnn.w2.copy())
+        slm2_arr = cp.zeros((self.k, self.m))*0.
+        slm2_arr[2:4, :] = cp.array(self.dnn.w2.copy())
 
         self.ctrl.update_slm1(slm_arr, lut=True)
         self.ctrl.update_slm2(slm2_arr, lut=True)
         time.sleep(1)
-
-    def activation(self, x, od, thresh):
-        # return x * np.exp(-(od/2)/(1+((x/thresh)**2)))
-        # return np.maximum(0, x)
-        return 1/(1+np.exp(-x))
-
-    def activation_d(self, x, od, thresh):
-        # return np.exp(-(od/2)/(1+(x/thresh)**2))
-        # return np.maximum(0, np.sign(x))
-        return x*(1-x)
 
     def run_batch(self, batch_num):
 
         #####################################
         # Start by running only forward MVM #
         #####################################
-
-        self.od = 3
-        self.thresh = 1
-        self.nonlinear = True
 
         xs = self.trainx[self.batch_indxs_list[batch_num], :].copy()
         ys = self.trainy[self.batch_indxs_list[batch_num], :].copy()
@@ -376,58 +652,50 @@ class MyONN:
         self.dnn.ys = ys
 
         self.theory_z1 = np.dot(xs, self.dnn.w1) + self.dnn.b1
-        self.theory_a1 = self.theory_z1.copy()
-        if self.nonlinear:
-            self.theory_a1 = self.activation(self.theory_z1, self.od, self.thresh)
+        self.theory_a1 = satab(self.theory_z1, self.od, self.thresh)
         self.theory_z2 = np.dot(self.theory_a1, self.dnn.w2.T)
 
         if self.forward == 'digital':
+            self.dnn.z1 = self.theory_z1.copy()
             self.dnn.a1 = self.theory_a1.copy()
             self.dnn.z2 = self.theory_z2.copy()
 
         elif self.forward == 'optical':
 
-            self.meas_a1 = np.empty((self.batch_size, self.m))
-            self.meas_z2 = np.empty((self.batch_size, self.k))
-
-            dmd_vecs = cp.ones((self.batch_size, self.n))
+            dmd_vecs = cp.ones((self.batch_size, self.n))*1.
             dmd_vecs[:, 1:] = cp.array(xs)
             dmd_vecs = cp.clip(dmd_vecs, 0, 1)
             dmd_vecs = (dmd_vecs * self.ctrl.dmd_block_w).astype(cp.int)/self.ctrl.dmd_block_w
 
-            num_repeats = self.batch_size//self.ctrl.num_frames
-            # only want to run 10 frames at a time on the DMD. If batch size is greater than 10,
-            # then run multiple sets of frames
-
-            # We allow 5 attempts at running the batch. After that, skip the batch.
-            ii = 0
+            success = False
             fails = 0
-            while ii < num_repeats:
+            while not success:
 
-                self.ctrl.run_batch(dmd_vecs[ii*self.ctrl.num_frames:(ii+1)*self.ctrl.num_frames, :])
-                success, err = self.ctrl.check_ampls(a1=True, z2=True, back=False)
+                self.ctrl.run_batch(dmd_vecs)
+                success = self.ctrl.captures['a1'].success and self.ctrl.captures['z2'].success
+
                 if not success:
                     fails += 1
                     if fails == 5:
                         print(colored('FAILED BATCH', 'red'))
-                        return False, err
-                    else:
-                        continue
-                else:
-                    self.meas_a1[ii*self.ctrl.num_frames:(ii+1)*self.ctrl.num_frames, :] = self.ctrl.ampls1.copy()
-                    self.meas_z2[ii*self.ctrl.num_frames:(ii+1)*self.ctrl.num_frames, :] = self.ctrl.ampls2.copy()
-                    ii += 1
+                        return False
 
-            self.meas_a1 = (self.meas_a1 - self.ctrl.norm_params1[:, 1].copy()) / self.ctrl.norm_params1[:, 0].copy()
-            self.meas_a1 *= np.sign(self.theory_a1)
+            # print('batch successful')
+            self.raw_a1 = self.ctrl.captures['a1'].ampls.copy()
+            self.meas_a1 = self.raw_a1 * np.sign(self.theory_a1)
+            self.meas_a1 = (self.meas_a1 - self.norm_params1[:, 1].copy()) / self.norm_params1[:, 0].copy()
+
+            self.dnn.z1 = self.theory_z1.copy()
             self.dnn.a1 = self.meas_a1.copy()
 
-            self.meas_z2 = (self.meas_z2 - self.ctrl.norm_params2[:, 1].copy()) / self.ctrl.norm_params2[:, 0].copy()
-            self.meas_z2 *= np.sign(self.theory_z2)
+            self.raw_z2 = self.ctrl.captures['z2'].ampls.copy()[:, 2:4]
+            self.meas_z2 = self.raw_z2 * np.sign(self.theory_z2)
+            self.meas_z2 = (self.meas_z2 - self.norm_params2[:, 1].copy()) / self.norm_params2[:, 0].copy()
+
             self.dnn.z2 = self.meas_z2.copy()
 
-            error1 = (self.meas_a1 - self.theory_a1).std() #/np.abs(self.meas_a1 - self.theory_a1).mean()
-            error2 = (self.meas_z2 - self.theory_z2).std() #/np.abs(self.meas_z2 - self.theory_z2).mean()
+            error1 = (self.meas_a1 - self.theory_a1).std()
+            error2 = (self.meas_z2 - self.theory_z2).std()
             self.errors1.append(error1)
             self.errors2.append(error2)
             # print(colored(f'error1 : {error1:.3f}', 'blue'))
@@ -441,16 +709,20 @@ class MyONN:
 
         self.dnn.loss = error(self.dnn.a2, self.dnn.ys)
 
-        self.dnn.a2_delta = (self.dnn.a2 - self.dnn.ys) #/self.batch_size
-        self.dnn.a2_delta = self.dnn.a2_delta/np.abs(self.dnn.a2_delta).max()
+        self.loss.append(self.dnn.loss)
+        # print(colored('loss : {:.2f}'.format(self.dnn.loss), 'green'))
+        self.loss_plot.pop(0).remove()
+        self.loss_plot = self.axsa.plot(self.loss, linestyle='-', marker='', c='b')
+
+        self.dnn.pred = self.dnn.a2.copy().argmax(axis=1)
+        self.dnn.label = self.dnn.ys.copy().argmax(axis=1)
+        self.accs.append(accuracy(self.dnn.pred, self.dnn.label))
+
+        self.dnn.a2_delta = (self.dnn.a2 - self.dnn.ys)/self.batch_size
+        # self.dnn.a2_delta = self.dnn.a2_delta/np.abs(self.dnn.a2_delta).max()
 
         self.theory_back = np.dot(self.dnn.a2_delta, self.dnn.w2)
-        if self.nonlinear:
-            self.theory_back *= self.activation_d(self.dnn.a1.copy(), self.od, self.thresh)
-
-        # z1_delta = np.dot(a2_delta, self.w2.T)
-        # if self.nonlinear:
-        #     a1_delta = z1_delta * relu_d(self.a1)  # w1
+        self.theory_back *= satab_d(self.dnn.z1.copy(), self.od, self.thresh)
 
         if self.backward == 'digital':
             self.dnn.a1_delta = self.theory_back.copy()
@@ -506,9 +778,9 @@ class MyONN:
 
         self.dnn.update_weights()
 
-        # self.dnn.w1 = np.clip(self.dnn.w1.copy(), -1, 1)
-        # self.dnn.w2 = np.clip(self.dnn.w2.copy(), -1, 1)
-        # self.dnn.b1 = np.clip(self.dnn.b1.copy(), -1, 1)
+        self.dnn.w1 = np.clip(self.dnn.w1.copy(), -1, 1)
+        self.dnn.w2 = np.clip(self.dnn.w2.copy(), -1, 1)
+        self.dnn.b1 = np.clip(self.dnn.b1.copy(), -1, 1)
 
         # self.dnn.w1 /= self.dnn.w1.max()
         # self.dnn.w2 /= self.dnn.w2.max()
@@ -520,142 +792,148 @@ class MyONN:
             slm_arr[1:, :] = cp.array(self.dnn.w1.copy())
             slm_arr[0, :] = cp.array(self.dnn.b1.copy())
 
-            slm2_arr = cp.array(self.dnn.w2.copy())
+            slm2_arr = cp.zeros((self.k, self.m))*0.
+            slm2_arr[2:4, :] = cp.array(self.dnn.w2.copy())
 
             self.ctrl.update_slm1(slm_arr, lut=True)
             self.ctrl.update_slm2(slm2_arr, lut=True)
 
-        if self.dnn.loss < self.min_loss:
-            self.min_loss = self.dnn.loss
-            self.best_w1 = self.dnn.w1.copy()
-            self.best_w2 = self.dnn.w2.copy()
-            self.best_b1 = self.dnn.b1.copy()
+        return True
 
-        self.loss.append(self.dnn.loss)
-        # print(colored('loss : {:.2f}'.format(self.dnn.loss), 'green'))
-        self.loss_plot.pop(0).remove()
-        self.loss_plot = self.axsa.plot(self.loss, linestyle='-', marker='', c='b')
+    def run_validation(self, epoch, grid=False):
 
-        return True, None
-
-    def run_validation(self, epoch, test_or_val='val'):
-
-        if test_or_val == 'val':
-            xs = self.valx.copy()
+        if grid:
+            xs = self.gridx.copy()
             num_val_batches = 10
-            ys = self.valy.copy()
-            label = ys.argmax(axis=1)
-
-        elif test_or_val == 'test':
-            gridx1 = np.linspace(0., 1., 20).repeat(20)
-            gridx2 = np.tile(np.linspace(0., 1., 20), 20)
-            xs = np.empty((20**2, 2))
-            xs[:, 0] = gridx1
-            xs[:, 1] = gridx2
-            num_val_batches = 40
-
+            folder = 'boundary'
         else:
-            raise ValueError
+            xs = self.testx.copy()
+            num_val_batches = 2
+            folder = 'validation'
 
         if self.forward == 'digital':
-            a1 = np.dot(xs, self.dnn.w1) + self.dnn.b1
+            z1 = np.dot(xs.copy(), self.dnn.w1) + self.dnn.b1
+            a1 = satab(z1, self.od, self.thresh)
             z2 = np.dot(a1, self.dnn.w2.T)
             a2 = softmax(z2*self.sm_scaling)
             pred = a2.argmax(axis=1)
 
         elif self.forward == 'optical':
 
-            xs_arr = xs.reshape((num_val_batches, self.ctrl.num_frames, xs.shape[1]))
-            meas_a1_raw = np.empty((num_val_batches, self.ctrl.num_frames, self.m))
-            meas_z2_raw = np.empty((num_val_batches, self.ctrl.num_frames, self.k))
+            xs_arr = xs.copy().reshape((num_val_batches, self.ctrl.num_frames, xs.shape[1]))
+            self.raw_a1 = np.empty((num_val_batches, self.ctrl.num_frames, self.m))*0.
+            self.raw_z2 = np.empty((num_val_batches, self.ctrl.num_frames, self.k))*0.
 
-            batch = 0
-            while batch < num_val_batches:
+            for batch in range(num_val_batches):
 
-                # print(batch)
-
-                dmd_vecs = cp.ones((self.ctrl.num_frames, self.n))
-                dmd_vecs[:, 1:] = cp.array(xs_arr[batch])
+                dmd_vecs = cp.ones((self.batch_size, self.n))*1.
+                dmd_vecs[:, 1:] = cp.array(xs_arr[batch, ...])
                 dmd_vecs = cp.clip(dmd_vecs, 0, 1)
                 dmd_vecs = (dmd_vecs * self.ctrl.dmd_block_w).astype(cp.int)/self.ctrl.dmd_block_w
 
-                self.ctrl.run_batch(dmd_vecs)
-                success, err = self.ctrl.check_ampls(a1=True, z2=True, back=False)
-                # if not success:
-                #     print('oh no, trying again')
+                success = False
+                fails = 0
+                while not success:
 
-                if success:
-                    meas_a1_raw[batch, ...] = self.ctrl.ampls1.copy()
-                    meas_z2_raw[batch, ...] = self.ctrl.ampls2.copy()
+                    self.ctrl.run_batch(dmd_vecs)
+                    success = self.ctrl.captures['a1'].success and self.ctrl.captures['z2'].success
 
-                    # self.th_line1.set_ydata(theory_a1[0, :])
-                    # self.meas_line1.set_ydata(meas_a1[0, :])
-                    # self.th_line2.set_ydata(theory_z2[0, :])
-                    # self.meas_line2.set_ydata(meas_z2[0, :])
+                    if not success:
+                        fails += 1
+                        if fails == 5:
+                            print(colored('FAILED BATCH', 'red'))
+                            return False
 
-                    batch += 1
+                # print('batch successful')
+                self.raw_a1[batch, ...] = self.ctrl.captures['a1'].ampls.copy()
+                self.raw_z2[batch, ...] = self.ctrl.captures['z2'].ampls.copy()
 
-            meas_a1_raw = np.reshape(meas_a1_raw, (num_val_batches*self.ctrl.num_frames, self.m))
-            meas_a1 = (meas_a1_raw - self.ctrl.norm_params1[:, 1].copy()) / self.ctrl.norm_params1[:, 0].copy()
-            theory_a1 = np.dot(xs, self.dnn.w1) + self.dnn.b1
-            meas_a1 *= np.sign(theory_a1)
+            self.theory_z1 = np.dot(xs, self.dnn.w1) + self.dnn.b1
+            self.theory_a1 = satab(self.theory_z1, self.od, self.thresh)
+            self.meas_a1 = np.reshape(self.raw_a1, (num_val_batches*self.ctrl.num_frames, self.m))
 
-            meas_z2_raw = np.reshape(meas_z2_raw, (num_val_batches*self.ctrl.num_frames, self.k))
-            meas_z2 = (meas_z2_raw - self.ctrl.norm_params2[:, 1].copy()) / self.ctrl.norm_params2[:, 0].copy()
-            theory_z2 = np.dot(theory_a1, self.dnn.w2.T)
-            meas_z2 *= np.sign(theory_z2)
+            self.meas_a1 *= np.sign(self.theory_a1)
+            self.meas_a1 = (self.meas_a1 - self.norm_params1[:, 1].copy()) / self.norm_params1[:, 0].copy()
 
-            pred = softmax(meas_z2*self.sm_scaling).argmax(axis=1)
+            self.theory_z2 = np.dot(self.theory_a1, self.dnn.w2.T)
+            self.raw_z2 = np.reshape(self.raw_z2, (num_val_batches*self.ctrl.num_frames, self.k))[:, 2:4]
+            self.meas_z2 = self.raw_z2 * np.sign(self.theory_z2)
+            self.meas_z2 = (self.meas_z2 - self.norm_params2[:, 1].copy()) / self.norm_params2[:, 0].copy()
 
-        if test_or_val == 'test':
-            np.save(self.save_folder+f'test_grid_predictions.npy', pred)
-            xs0, ys0 = np.meshgrid(np.linspace(0, 1, 20), np.linspace(0, 1, 20))
-            self.axse.contourf(xs0, ys0, pred.reshape((20, 20)).T)
+            self.dnn.a1 = self.meas_a1.copy()
+            self.dnn.z2 = self.meas_z2.copy()
 
-        if test_or_val == 'val':
-            acc = accuracy(pred, label)
+            pred = softmax(self.meas_z2*self.sm_scaling).argmax(axis=1)
+
+            np.save(self.save_folder+f'{folder}/raw_ampls1/raw_ampls_1_epoch{epoch}.npy', self.raw_a1)
+            np.save(self.save_folder+f'{folder}/raw_ampls2/raw_ampls_2_epoch{epoch}.npy', self.raw_z2)
+            np.save(self.save_folder+f'{folder}/meas_a1/meas_a1_epoch{epoch}.npy', self.meas_a1)
+            np.save(self.save_folder+f'{folder}/meas_z2/meas_z2_epoch{epoch}.npy', self.meas_z2)
+            np.save(self.save_folder+f'{folder}/theory_a1/theory_a1_epoch{epoch}.npy', self.theory_a1)
+            np.save(self.save_folder+f'{folder}/theory_z2/theory_z2_epoch{epoch}.npy', self.theory_z2)
+
+            [self.a1_scatter.pop(0).remove() for _ in range(self.m)]
+            self.a1_scatter = self.axs0.plot(self.theory_z1, self.meas_a1, linestyle='', marker='x')
+            [self.z2_scatter.pop(0).remove() for _ in range(2)]
+            self.z2_scatter = self.axs1.plot(self.theory_z2, self.meas_z2, linestyle='', marker='x')
+
+        if grid:
+
+            np.save(self.save_folder+f'{folder}/predictions/pred_epoch{epoch}.npy', pred)
+
+            xs0, ys0 = np.meshgrid(np.linspace(0, 1, self.res), np.linspace(0, 1, self.res))
+            self.axse.contourf(xs0, ys0, pred.reshape((self.res, self.res)).T)
+            self.axse.scatter(self.trainx[:, 0], self.trainx[:, 1], c=self.trainy[:, 0], cmap='winter')
+
+        else:
+
+            label = self.testy.copy().argmax(axis=1)
+
+            np.save(self.save_folder+f'{folder}/predictions/pred_epoch{epoch}.npy', pred)
+            np.save(self.save_folder+f'{folder}/labels/labels_epoch{epoch}.npy', label)
+
+            acc = (pred == label).sum()*100/80
             self.accs.append(acc)
+
             np.save(self.save_folder+f'accuracies.npy', np.array(self.accs))
-            np.save(self.save_folder+f'validation/predictions/predictions_epoch{epoch}.npy', pred)
-            np.save(self.save_folder+f'validation/labels/labels_epoch{epoch}.npy', label)
-
-            if self.forward == 'optical':
-                np.save(self.save_folder+f'validation/raw_ampls1/raw_ampls_1_epoch{epoch}.npy', meas_a1_raw)
-                np.save(self.save_folder+f'validation/raw_ampls2/raw_ampls_2_epoch{epoch}.npy', meas_z2_raw)
-                np.save(self.save_folder+f'validation/meas_a1/meas_a1_epoch{epoch}.npy', meas_a1)
-                np.save(self.save_folder+f'validation/meas_z2/meas_z2_epoch{epoch}.npy', meas_z2)
-                np.save(self.save_folder+f'validation/theory_a1/theory_a1_epoch{epoch}.npy', theory_a1)
-                np.save(self.save_folder+f'validation/theory_z2/theory_z2_epoch{epoch}.npy', theory_z2)
-
-
-
-            self.label_scatter.remove()
-            self.label_scatter = self.axsd.scatter(xs[:, 0], xs[:, 1], c=label)
-
-            self.pred_scatter.remove()
-            self.pred_scatter = self.axse.scatter(xs[:, 0], xs[:, 1], c=pred)
-
-            correct = pred == label
-            self.correct_scatter.remove()
-            self.correct_scatter = self.axsf.scatter(xs[:, 0], xs[:, 1], c=correct, cmap='RdYlGn')
 
             self.accs_plot.pop(0).remove()
             self.accs_plot = self.axsb.plot(self.accs, linestyle='-', marker='x', c='b')
             plt.draw()
             plt.pause(0.1)
 
+
+
+        # if test_or_val == 'val':
+        #     acc = accuracy(pred, label)
+        #     self.accs.append(acc)
+        #     np.save(self.save_folder+f'accuracies.npy', np.array(self.accs))
+        #     np.save(self.save_folder+f'validation/predictions/predictions_epoch{epoch}.npy', pred)
+        #     np.save(self.save_folder+f'validation/labels/labels_epoch{epoch}.npy', label)
+        #
+        # self.label_scatter.remove()
+        # self.label_scatter = self.axsd.scatter(xs[:, 0], xs[:, 1], c=label)
+        #
+        # self.pred_scatter.remove()
+        # self.pred_scatter = self.axse.scatter(xs[:, 0], xs[:, 1], c=pred)
+        #
+        # correct = pred == label
+        # self.correct_scatter.remove()
+        # self.correct_scatter = self.axsf.scatter(xs[:, 0], xs[:, 1], c=correct, cmap='RdYlGn')
+
+
     def save_batch(self, epoch, batch):
 
         if self.forward == 'optical':
             np.save(self.save_folder+f'training/frames1/frames1_epoch{epoch}_batch{batch}.npy',
-                    self.ctrl.frames1)
+                    self.ctrl.captures['a1'].frames)
             np.save(self.save_folder+f'training/frames2/frames2_epoch{epoch}_batch{batch}.npy',
-                    self.ctrl.frames2)
+                    self.ctrl.captures['z2'].frames)
 
             np.save(self.save_folder+f'training/raw_ampls1/raw_ampls1_epoch{epoch}_batch{batch}.npy',
-                    self.ctrl.ampls1)
+                    self.ctrl.captures['a1'].ampls)
             np.save(self.save_folder+f'training/raw_ampls2/raw_ampls2_epoch{epoch}_batch{batch}.npy',
-                    self.ctrl.ampls2)
+                    self.ctrl.captures['z2'].ampls)
 
             np.save(self.save_folder+f'training/meas_a1/meas_a1_epoch{epoch}_batch{batch}.npy',
                     self.meas_a1)
@@ -674,9 +952,9 @@ class MyONN:
             np.save(self.save_folder+f'training/meas_back/meas_back_epoch{epoch}_batch{batch}.npy',
                     self.meas_back)
             np.save(self.save_folder+f'training/raw_ampls3/raw_ampls3_epoch{epoch}_batch{batch}.npy',
-                    self.ctrl.ampls3)
+                    self.ctrl.captures['back'].ampls)
             np.save(self.save_folder+f'training/frames3/frames3_epoch{epoch}_batch{batch}.npy',
-                    self.ctrl.frames3)
+                    self.ctrl.captures['back'].frames)
 
         np.save(self.save_folder+f'training/xs/xs_epoch{epoch}_batch{batch}.npy',
                 self.dnn.xs)
@@ -695,26 +973,34 @@ class MyONN:
 
         frame = -1
 
-        self.th_line1.set_ydata(self.theory_a1[frame, :])
-        self.meas_line1.set_ydata(self.meas_a1[frame, :])
+        if self.forward == 'optical':
 
-        self.th_line2.set_ydata(self.theory_z2[frame, :])
-        self.meas_line2.set_ydata(self.meas_z2[frame, :])
-        self.softmax_line2.set_ydata(self.dnn.a2[frame, :])
-        self.label_line2.set_ydata(self.dnn.ys[frame, :])
+            self.th_line1.set_ydata(self.theory_a1[frame, :])
+            self.meas_line1.set_ydata(self.meas_a1[frame, :])
 
-        [self.a1_scatter.pop(0).remove() for _ in range(self.m)]
-        self.a1_scatter = self.axs0.plot(self.theory_a1, self.meas_a1, linestyle='', marker='x')
-        [self.z2_scatter.pop(0).remove() for _ in range(self.k)]
-        self.z2_scatter = self.axs1.plot(self.theory_z2, self.meas_z2, linestyle='', marker='x')
+            # self.th_line2.set_ydata(self.theory_z2[frame, :])
+            # self.meas_line2.set_ydata(self.meas_z2[frame, :])
+            # self.softmax_line2.set_ydata(self.dnn.a2[frame, :])
+            # self.label_line2.set_ydata(self.dnn.ys[frame, :])
 
-        self.img1.set_array(self.ctrl.frames1[frame])
-        self.img2.set_array(self.ctrl.frames2[frame])
+            [self.a1_scatter.pop(0).remove() for _ in range(self.m)]
+            self.a1_scatter = self.axs0.plot(self.theory_z1, self.meas_a1, linestyle='', marker='x')
+            try:
+                [self.z2_scatter.pop(0).remove() for _ in range(2)]
+            except AttributeError:
+                pass
+            self.z2_scatter = self.axs1.plot(self.theory_z2, self.meas_z2, linestyle='', marker='x')
 
-        self.err1_plot.pop(0).remove()
-        self.err1_plot = self.axsc.plot(self.errors1, linestyle='-', marker='', c='r')
-        self.err2_plot.pop(0).remove()
-        self.err2_plot = self.axsc.plot(self.errors2, linestyle='-', marker='', c='g')
+            self.img1.set_array(self.ctrl.captures['a1'].frames[frame])
+            self.img2.set_array(self.ctrl.captures['z2'].frames[frame])
+
+            self.err1_plot.pop(0).remove()
+            self.err1_plot = self.axsc.plot(self.errors1, linestyle='-', marker='', c='r')
+            self.err2_plot.pop(0).remove()
+            self.err2_plot = self.axsc.plot(self.errors2, linestyle='-', marker='', c='g')
+
+        self.accs_plot.pop(0).remove()
+        self.accs_plot = self.axsb.plot(self.accs, linestyle='-', marker='', c='b')
 
         if self.backward == 'optical':
 
@@ -732,12 +1018,13 @@ class MyONN:
 
 if __name__ == "__main__":
 
-    n, m, k = 3, 10, 3
+    n, m, k = 3, 10, 5
 
-    batch_size = 10
+    batch_size = 5
     num_batches = 10
     num_epochs = 20
     lr = 0.05
+    scaling = 15
 
     slm_arr = np.random.normal(0, 0.5, (n, m))
     slm_arr = np.clip(slm_arr, -1, 1)
@@ -749,12 +1036,14 @@ if __name__ == "__main__":
 
     onn = MyONN(batch_size=batch_size, num_batches=num_batches, num_epochs=num_epochs,
                 w1_0=slm_arr[1:, :], w2_0=slm2_arr, b1_0=slm_arr[0, :],
-                lr=lr, dimensions=(n, m, k),
+                lr=lr, scaling=scaling, dimensions=(n, m, k),
                 save_folder=None,
-                trainx=None, testx=None, trainy=None, testy=None,
-                forward='optical', backward='optical')
+                trainx=None, testx=None, trainy=None,
+                forward='optical', backward='digital')
 
-    onn.run_calibration(initial=True)
+    onn.run_calibration_linear()
+    onn.run_calibration_nonlinear_layer1()
+    onn.run_calibration_nonlinear_layer2()
 
     plt.show(block=True)
 

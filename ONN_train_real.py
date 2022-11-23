@@ -44,7 +44,7 @@ ONN.w2 = w2
 
 ONN.load_dataset()
 ONN.graphs()
-ONN.run_calibration()
+ONN.run_calibration_linear()
 ONN.init_onn()
 
 ####################################################

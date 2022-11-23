@@ -12,6 +12,7 @@ from glumpy.app import clock
 from glumpy_display import setup, window_on_draw
 from slm_display import SLMdisplay
 from make_slm_images import make_slm1_rgb, make_slm2_rgb, make_dmd_batch, update_params
+from collections import deque
 from threading import Thread
 import ueye_thread
 import matplotlib.pyplot as plt
@@ -25,61 +26,49 @@ pinned_mempool = cp.get_default_pinned_memory_pool()
 
 class CaptureProcess(pylon.ImageEventHandler):
 
-    def __init__(self, window, live, m, back=False):
+    def __init__(self, window, live):
         super().__init__()
+
+        buffer_size = 300
 
         self.window = window
         self.live = live
-        self.frames = []
-        self.ampls = []
-        self.m = m
-        self.back = back
-        if back:
-            spot_indxs = np.load("C:/Users/spall/OneDrive - Nexus365/Code/JS/PycharmProjects/ONN/tools/"
-                                 "spot_indxs_back.npy")
-        else:
-            spot_indxs = np.load("C:/Users/spall/OneDrive - Nexus365/Code/JS/PycharmProjects/ONN/tools/"
-                                 "spot_indxs.npy")
-        self.y_center = spot_indxs[-1]
-        self.spot_indxs = spot_indxs[:-1]
-        self.area_width = self.spot_indxs.shape[0]//m
+        self.raw_markers = deque(maxlen=buffer_size)
+        self.raw_frames = deque(maxlen=buffer_size)
+        self.frames = None
+        self.ampls = None
+        self.markers = None
+        self.values = None
+        self.norm_params = None
 
     def OnImageGrabbed(self, cam, grab_result):
         if grab_result.GrabSucceeded():
 
-            if self.live:
-                self.window.SetImage(grab_result)
+            # print('got one')
+
+            # if self.live:
+            #     self.window.SetImage(grab_result)
             # self.window.Show()
 
-            image = grab_result.GetArray().T
+            image = grab_result.GetArray()
+            self.raw_frames.append(image)
 
-            mask = image < 3
-            image -= 2
-            image[mask] = 0
-
-            spots = image[self.spot_indxs, self.y_center-2:self.y_center+3].copy()
-            powers = spots.reshape((self.m, self.area_width, 5)).mean(axis=(1, 2))
-            ampls = np.sqrt(powers)
-            # if self.back:
-            #     ampls = np.flip(ampls)
-
-            self.frames.append(image.T)
-            self.frames = self.frames[-20:]  # only store the 20 most recent frames
-
-            self.ampls.append(ampls)
-            self.ampls = self.ampls[-20:]  # only store the 20 most recent frames
+            marker = image[40-2:40+3, 595:614].max()
+            self.raw_markers.append(marker)
 
 
 class Controller:
 
-    def __init__(self,  _n, _m, _k, _num_frames=10,
-                 use_pylons=True, use_ueye=True, live=False):
+    def __init__(self,  _n, _m, _k, _num_frames,
+                 use_pylons=True, use_ueye=True, live=True):
 
         self.n = _n
         self.m = _m
         self.k = _k
         self.num_frames = _num_frames
         self.live = live
+
+        self.captures = {}
 
         #################
         # PYLON CAMERAS #
@@ -89,10 +78,14 @@ class Controller:
 
             # os.environ["PYLON_CAMEMU"] = "2"
             tlfactory = pylon.TlFactory.GetInstance()
+            time.sleep(0.5)
             devices = tlfactory.EnumerateDevices()
+            time.sleep(0.5)
             assert len(devices) == 2
             self.cameras = pylon.InstantCameraArray(2)
+            time.sleep(0.5)
             for i, camera in enumerate(self.cameras):
+                print(devices[i].GetFriendlyName())
                 camera.Attach(tlfactory.CreateDevice(devices[i]))
                 camera.Open()
 
@@ -102,7 +95,7 @@ class Controller:
             # self.imageWindow1 = pylon.PylonImageWindow()
             # self.imageWindow1.Create(1)
             # self.imageWindow1.Show()
-
+            #
             # self.imageWindow3 = pylon.PylonImageWindow()
             # self.imageWindow3.Create(3)
             # self.imageWindow3.Show()
@@ -110,13 +103,13 @@ class Controller:
             self.imageWindow1 = None
             self.imageWindow3 = None
 
-            self.capture1 = CaptureProcess(self.imageWindow1, self.live, self.m)
-            self.capture3 = CaptureProcess(self.imageWindow3, self.live, self.m, back=True)
+            self.captures['a1'] = CaptureProcess(self.imageWindow1, self.live)
+            # self.captures['back'] = CaptureProcess(self.imageWindow3, self.live)
 
-            self.cameras[0].RegisterImageEventHandler(self.capture1, pylon.RegistrationMode_ReplaceAll,
+            self.cameras[0].RegisterImageEventHandler(self.captures['a1'], pylon.RegistrationMode_ReplaceAll,
                                                       pylon.Cleanup_None)
-            self.cameras[1].RegisterImageEventHandler(self.capture3, pylon.RegistrationMode_ReplaceAll, pylon.
-                                                      Cleanup_None)
+            # self.cameras[1].RegisterImageEventHandler(self.captures['back'], pylon.RegistrationMode_ReplaceAll,
+            #                                           pylon.Cleanup_None)
 
             self.cameras.StartGrabbing(pylon.GrabStrategy_OneByOne, pylon.GrabLoop_ProvidedByInstantCamera)
             time.sleep(1)
@@ -127,9 +120,8 @@ class Controller:
         ###############
 
         if use_ueye:
-
-            self.capture2 = ueye_thread.UeyeCamera(self.k, self.live)
-            self.capture2.start()
+            self.captures['z2'] = ueye_thread.UeyeCamera(self.k, self.live)
+            self.captures['z2'].start()
 
         #######
         # SLM #
@@ -146,20 +138,17 @@ class Controller:
 
         self.dmd_block_w, self.dmd_err_block_w = update_params(self.n, self.m, self.k, self.num_frames)
 
-        ampl_lut_slm1 = np.load("./tools/ampl_lut_26x26.npy")
-        # ampl_lut_slm1 = np.repeat(ampl_lut_slm1, 3, axis=1)
-        # cols_del = np.linspace(0, 29, 5).astype(int)
-        # ampl_lut_slm1 = np.delete(ampl_lut_slm1, cols_del, axis=1)
+        ampl_lut_slm1 = np.load("./tools/ampl_lut.npy")
         self.gpu_ampl_lut_slm1 = cp.array(ampl_lut_slm1, dtype=cp.float16)
 
         ampl_lut_slm2 = np.load("./tools/ampl_lut_2.npy")
         self.gpu_ampl_lut_slm2 = cp.array(ampl_lut_slm2, dtype=cp.float16)
 
-        self.slm = SLMdisplay([-1920, -3*1920],
+        self.slm = SLMdisplay([-0*1920, -2*1920],
                               [1920, 1920],
                               [1080, 1152],
                               ['SLM1', 'SLM2'],
-                              isImageLock=False)
+                              isImageLock=True)
 
         #######
         # DMD #
@@ -167,7 +156,7 @@ class Controller:
 
         self.backend = app.use('glfw')
         self.window = app.Window(1920, 1080, fullscreen=0, decoration=0)
-        self.window.set_position(-2*1920, 0)
+        self.window.set_position(-1*1920, 0)
         self.window.activate()
         self.window.show()
 
@@ -185,28 +174,40 @@ class Controller:
 
         ###############
 
-        self.target_frames = None
-        self.fc = None
-        self.cp_arr = None
-        self.frame_count = None
+        # self.target_frames = None
+        # self.fc = self.num_frames+2
+        # self.cp_arr = None
+        # self.frame_count = None
 
-        self.frames1 = None
-        self.ampls1 = None
-        self.a1s = None
-        self.norm_params1 = None
+        # self.frames1 = None
+        # self.ampls1 = None
+        # self.a1s = None
+        # self.norm_params1 = None
+        #
+        # self.frames2 = None
+        # self.ampls2 = None
+        # self.z2s = None
+        # self.norm_params2 = None
+        #
+        # self.frames3 = None
+        # self.ampls3 = None
+        # self.d2s = None
+        # self.norm_params3 = None
 
-        self.frames2 = None
-        self.ampls2 = None
-        self.z2s = None
-        self.norm_params2 = None
+        self.marker_frame = make_dmd_batch(vecs=None, marker=True)
 
-        self.frames3 = None
-        self.ampls3 = None
-        self.d2s = None
-        self.norm_params3 = None
+        spot_indxs = np.load("C:/Users/spall/OneDrive - Nexus365/Code/JS/PycharmProjects/ONN/tools/"
+                             "spot_indxs.npy")
 
-        self.marker_frame = make_dmd_batch(cp.ones((self.num_frames, self.n)),
-                                           cp.ones((self.num_frames, self.k)))[0]
+        self.y_center = spot_indxs[-1]
+        self.spot_indxs = spot_indxs[:-1]
+        self.area_width = self.spot_indxs.shape[0]//self.m
+
+        spot_indxs2 = np.load("C:/Users/spall/OneDrive - Nexus365/Code/JS/PycharmProjects/ONN/tools/"
+                              "spot_indxs2.npy")
+        self.y_center2 = spot_indxs2[-1]
+        self.spot_indxs2 = spot_indxs2[:-1]
+        self.area_width2 = self.spot_indxs2.shape[0]//self.k
 
         self.init_dmd()
 
@@ -273,136 +274,161 @@ class Controller:
         app.run(clock=self.dmd_clock, framerate=0, framecount=self.fc)
         time.sleep(1)
 
+    def dmd_run_blanks(self, on=False):
+
+        self.target_frames = cp.zeros((10, 1080, 1920, 4), dtype=cp.uint8)
+        if on:
+            self.target_frames += 255
+        self.cp_arr = self.target_frames[0]
+        self.frame_count = 0
+        self.fc = self.target_frames.shape[0]+1
+
+        app.run(clock=self.dmd_clock, framerate=0, framecount=self.fc)
+        time.sleep(0.2)
+
+        return
+
     def run_batch(self, vecs_in, errs_in=None):
 
-        self.target_frames = cp.zeros((self.num_frames+3, 1080, 1920, 4), dtype=cp.uint8)
-        self.target_frames[0, :, :, :-1] = self.marker_frame
-        self.target_frames[1:-2, :, :, :-1] = make_dmd_batch(vecs_in, errs_in)
+        self.target_frames = cp.zeros((self.num_frames+10, 1080, 1920, 4), dtype=cp.uint8)
+        self.target_frames[1, :, :, :-1] = self.marker_frame.copy()
+        self.target_frames[2:2+self.num_frames, :, :, :-1] = make_dmd_batch(vecs_in, errs_in, marker=False)
+        self.target_frames[2+self.num_frames, :, :, :-1] = self.marker_frame.copy()
         self.target_frames[..., -1] = 255
 
         self.cp_arr = self.target_frames[0]
         self.frame_count = 0
+        self.fc = self.target_frames.shape[0]
 
-        self.capture3.frames = []
-        self.capture1.frames = []
-        self.capture2.frames = []
-
-        self.capture3.ampls = []
-        self.capture1.ampls = []
-        self.capture2.ampls = []
+        for key, camera in self.captures.items():
+            camera.raw_frames.clear()
+            camera.raw_markers.clear()
 
         app.run(clock=self.dmd_clock, framerate=0, framecount=self.fc)
-        time.sleep(0.15)
+        time.sleep(0.1)
 
-        self.frames3 = np.array(self.capture3.frames)
-        self.frames1 = np.array(self.capture1.frames)
-        self.frames2 = np.array(self.capture2.frames)
+        for key, camera in self.captures.items():
+            camera.frames = np.array(camera.raw_frames)
+            camera.markers = np.array(camera.raw_markers)
 
-        self.ampls3 = np.array(self.capture3.ampls)
-        self.ampls1 = np.array(self.capture1.ampls)
-        self.ampls2 = np.array(self.capture2.ampls)
+            camera.success, camera.error = self.process_markers(key)
+
+            if camera.success:
+                camera.ampls = self.find_spot_ampls(camera.frames, key)
 
         return
 
-    # def find_spot_ampls1(self, arrs):
-    #
-    #     # mask = arrs < 3
-    #     # arrs -= 2
-    #     # arrs[mask] = 0
-    #
-    #     def spot_s(i):
-    #         return np.s_[:, self.y_centers[i]-2:self.y_centers[i]+3,
-    #                      self.x_edge_indxs[2 * i]:self.x_edge_indxs[2 * i + 1]]
-    #
-    #     spot_powers = cp.array([arrs[spot_s(i)].mean(axis=(1, 2)) for i in range(self.m)])
-    #     # spot_powers = cp.random.randint(0, 256, (self.num_frames, self.m)).T
-    #
-    #     spot_ampls = cp.sqrt(spot_powers).T
-    #
-    #     return spot_ampls
-    #
-    # def find_spot_ampls2(self, arrs):
-    #
-    #     # mask = arrs < 3
-    #     # arrs -= 2
-    #     # arrs[mask] = 0
-    #
-    #     def spot_s(i):
-    #         return np.s_[:, self.y_centers2[i]-2:self.y_centers2[i]+3,
-    #                      self.x_edge_indxs2[2 * i]:self.x_edge_indxs2[2 * i + 1]]
-    #
-    #     spot_powers = cp.array([arrs[spot_s(i)].mean(axis=(1, 2)) for i in range(self.k)])
-    #     # spot_powers = cp.random.randint(0, 256, (self.num_frames, self.m)).T
-    #
-    #     spot_ampls = cp.sqrt(spot_powers)
-    #     spot_ampls = cp.flip(spot_ampls, axis=0).T
-    #
-    #     return spot_ampls
-    #
-    # def find_spot_ampls3(self, arrs):
-    #
-    #     # mask = arrs < 3
-    #     # arrs -= 2
-    #     # arrs[mask] = 0
-    #
-    #     def spot_s(i):
-    #         return np.s_[:, self.y_centers3[i]-2:self.y_centers3[i]+3,
-    #                      self.x_edge_indxs3[2 * i]:self.x_edge_indxs3[2 * i + 1]]
-    #
-    #     spot_powers = cp.array([arrs[spot_s(i)].mean(axis=(1, 2)) for i in range(self.m)])
-    #     # spot_powers = cp.random.randint(0, 256, (self.num_frames, self.m)).T
-    #
-    #     spot_ampls = cp.sqrt(spot_powers)
-    #     spot_ampls = cp.flip(spot_ampls, axis=0).T
-    #
-    #     return spot_ampls
+    def process_markers(self, key):
 
-    def check_ampls(self, a1=True, z2=True, back=True, calib=False):
+        camera = self.captures[key]
+
+        markers = camera.markers
+        markers = markers/markers.max()
+
+        # print(markers)
+        # print(camera.frames.max(axis=(1, 2)))
+
+        marker_indxs = np.where(markers > 0.8)[0]
+
+        if marker_indxs.shape[0] == 2:
+            start = marker_indxs[0]
+            end = marker_indxs[1]
+            # print('start: ', start)
+            # print('end: ', end)
+            if (end - start) != self.num_frames+1:
+                print(colored(f'wrong num frames ^', 'red'))
+                return False, 'count'
+            else:
+                camera.frames = camera.frames[start+1:end]
+                return True, None
+        else:
+            print(colored(f'no clear markers ^', 'red'))
+            return False, 'markers'
+
+    def find_spot_ampls(self, arrs, cam):
+        if cam == 'a1':
+
+            mask = arrs < 2
+            arrs -= 1
+            arrs[mask] = 0
+
+            arrs = np.transpose(arrs, (0, 2, 1))
+            spots = arrs[:, self.spot_indxs, self.y_center-1:self.y_center+2].copy()
+            powers = spots.reshape((arrs.shape[0], self.m, self.area_width, 3)).mean(axis=(2, 3))
+            spot_ampls = np.sqrt(powers)
+
+            # print('found ampls 1, shape: ', spot_ampls.shape)
+
+        if cam == 'z2':
+
+            mask = arrs < 2
+            arrs -= 1
+            arrs[mask] = 0
+
+            arrs = np.transpose(arrs, (0, 2, 1))
+            spots = arrs[:, self.spot_indxs2, self.y_center2-2:self.y_center2+2].copy()
+            spots = spots.reshape((arrs.shape[0], self.k, self.area_width2, 4)).mean(axis=(2, 3))
+
+            spot_ampls = np.sqrt(spots)
+
+            # print('found ampls 2, shape: ', spot_ampls.shape)
+
+        if cam == 'back':
+            pass
+
+            # mask = arrs < 3
+            # arrs -= 2
+            # arrs[mask] = 0
+            #
+            # def spot_s(i):
+            #     return np.s_[:, self.y_centers3[i]-2:self.y_centers3[i]+3,
+            #                  self.x_edge_indxs3[2 * i]:self.x_edge_indxs3[2 * i + 1]]
+            #
+            # spot_powers = cp.array([arrs[spot_s(i)].mean(axis=(1, 2)) for i in range(self.m)])
+            # # spot_powers = cp.random.randint(0, 256, (self.num_frames, self.m)).T
+            #
+            # spot_ampls = cp.sqrt(spot_powers)
+            # spot_ampls = cp.flip(spot_ampls, axis=0).T
+
+        return spot_ampls
+
+    def check_ampls(self, which_to_check=('a1', 'z2', 'back')):
 
         success = True
-        processed_ampls = {}
-        processed_frames = {}
-        checklist_ampls = {}
-        checklist_frames = {}
+        errors = []
 
-        # lim = {'a1': 0.1, 'z2': 0.2, 'back': 0.1}
         lim = {'a1': 1., 'z2': 1., 'back': 1.}
 
-        if a1:
-            checklist_ampls['a1'] = self.ampls1
-            checklist_frames['a1'] = self.frames1
-        if z2:
-            checklist_ampls['z2'] = self.ampls2
-            checklist_frames['z2'] = self.frames2
-        if back:
-            checklist_ampls['back'] = self.ampls3
-            checklist_frames['back'] = self.frames3
+        for key in which_to_check:
 
-        for key in checklist_ampls.keys():
+            camera = self.captures[key]
 
-            ampls = checklist_ampls[key]
-            frames = checklist_frames[key]
-
-            maxs = ampls.max(axis=1)
-            # print(key, ":")
-            # print(maxs)
+            maxs = camera.ampls.max(axis=1)
+            print(key, ":")
+            print(maxs)
 
             if maxs[0] > lim[key]:
                 print(colored('frames out of sync ^', 'red'))
-                error = 'sync '
-                # print(maxs)
+                errors.append(f'{key} sync')
                 success = False
+                continue
             elif maxs[-1] > lim[key]:
                 print(colored('frames out of sync ^', 'red'))
-                error = 'sync '
-                # print(maxs)
+                errors.append(f'{key} sync')
                 success = False
+                continue
             else:
-                start = (maxs > lim[key]).argmax()
+                camera.ampls = camera.ampls[start + 1:end, :]
+                camera.frames = camera.frames[start + 1:end, :]
 
-                maxs = maxs[start:]
-                diffs = np.abs(np.diff(maxs))
-                start1 = (diffs > 0.1).argmax()
+
+                # start = (maxs > lim[key]).argmax()
+                # print(start)
+
+                # maxs = maxs[start:]
+                # diffs = np.abs(np.diff(maxs))
+                #
+                # start1 = (diffs > 0.1).argmax()
 
                 # end = maxs.shape[0] - np.flip((maxs > lim[key])).argmax()
                 # start += 1
@@ -417,17 +443,8 @@ class Controller:
                 #         # start = a1_start
                 #         end = start+10 #a1_end
 
-                start += start1 + 1
-                end = start + self.num_frames
+                # end = start + 1 + self.num_frames
 
-                ampls = ampls[start:end, :]
-                frames = frames[start:end, ...]
-
-                if ampls.shape[0] != self.num_frames:
-                    print(colored(f'wrong num frames ^', 'red'))
-                    # print(maxs)
-                    error = 'count'
-                    success = False
                 # else:
                 #     diffs = np.abs(np.diff(ampls, axis=0))
                 #     diffs /= ampls[:-1, :]+1e-5
@@ -437,29 +454,11 @@ class Controller:
                 #     if repeats:
                 #         print(colored('repeated frames', 'red'))
                 #         success = False
-                else:
-                    processed_ampls[key] = ampls
-                    processed_frames[key] = frames
-
-        # if back:
-        #     if a1_start != back_start:
-        #         print(a1_start, back_start)
-        #     if a1_end != back_end:
-        #         print(a1_end, back_end)
 
         if success:
-            if a1:
-                self.ampls1 = processed_ampls['a1']
-                self.frames1 = processed_frames['a1']
-            if z2:
-                self.ampls2 = processed_ampls['z2']
-                self.frames2 = processed_frames['z2']
-            if back:
-                self.ampls3 = processed_ampls['back']
-                self.frames3 = processed_frames['back']
             return True, None
         else:
-            return False, error
+            return False, errors
 
     def update_slm1(self, arr, phi=None, lut=True):
 
@@ -473,9 +472,10 @@ class Controller:
 
         if lut:
             map_indx = cp.argmin(cp.abs(self.gpu_ampl_lut_slm1 - gpu_a), axis=0)
-            gpu_a = cp.linspace(0., 1., 64)[map_indx]
+            gpu_a = cp.linspace(0., 1., 256)[map_indx]
 
         img = make_slm1_rgb(gpu_a, gpu_phi)
+
         self.slm.updateArray('SLM1', img)
 
     def update_slm2(self, arr, lut):
@@ -512,7 +512,7 @@ class Controller:
             # if theory[:, j].std() < 0.1:
             #     norm_params[j, :] = np.array([curve_fit(line_no_c, np.abs(theory[:, j]), measured[:, j])[0], 0.])
             # else:
-            norm_params[j, :] = curve_fit(line, np.abs(theory[:, j]), np.abs(measured[:, j]))[0]
+            norm_params[j, :] = curve_fit(line, theory[:, j], measured[:, j])[0]
 
         return norm_params
 
@@ -543,7 +543,7 @@ class Controller:
         return norm_params
 
     def close(self):
-        self.cameras.Close()
+        self.captures.Close()
         # imageWindow.Close()
         self.context.pop()
         app.quit()
@@ -553,7 +553,7 @@ class Controller:
 
 if __name__ == "__main__":
 
-    n, m, k = 3, 10, 3
+    n, m, k = 3, 10, 5
     num_frames = 2
 
     control = Controller(n, m, k, num_frames, use_pylons=False, use_ueye=False)

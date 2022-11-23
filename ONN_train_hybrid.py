@@ -14,91 +14,64 @@ from skimage.transform import rescale, resize
 # Classification problem data  #
 ################################
 
-# x, y = make_classification(n_samples=500, n_features=2, n_informative=2, n_redundant=0, n_repeated=0, n_classes=3,
-#                            n_clusters_per_class=1, weights=None, flip_y=0.01, class_sep=1.0, hypercube=True, shift=0.0,
-#                            scale=1.0, shuffle=True, random_state=6)
-#
-# y_onehot = np.zeros((500, 3))
-#
-# for i in range(500):
-#     y_onehot[i, int(y[i])] = 1
-#
-# trainy = y_onehot[:400, :].copy()
-# valy = y_onehot[400:, :].copy()
-# # testy = y_onehot[500:, :].copy()
-#
-# xnorm = x.copy()
-# xnorm[:, 0] -= xnorm[:, 0].min()
-# xnorm[:, 0] *= 1./xnorm[:, 0].max()
-# xnorm[:, 1] -= xnorm[:, 1].min()
-# xnorm[:, 1] *= 1./xnorm[:, 1].max()
-#
-# trainx = xnorm[:400, :].copy()
-# valx = xnorm[400:, :].copy()
-# # testx = xnorm[500:, :].copy()
+seed = 1
 
-x, y = datasets.load_digits(n_class=3, return_X_y=True)
+np.random.seed(seed)
 
-rng = np.random.default_rng(10)
-rng.shuffle(x)
-rng = np.random.default_rng(10)
-rng.shuffle(y)
+trainx = np.load('./datasets/rainbow/trainx.npy')
+trainy = np.load('./datasets/rainbow/trainy.npy')
 
-x = x[:500]
-y = y[:500]
+np.random.seed(seed)
+np.random.shuffle(trainx)
+np.random.seed(seed)
+np.random.shuffle(trainy)
 
-x = np.array([resize(x[i].reshape((8, 8)), (5, 5)).reshape(25) for i in range(500)])
+# testx = trainx[:80, :].copy()
+# trainx = trainx[80:, :].copy()
+# testy = trainy[:80, :].copy()
+# trainy = trainy[80:, :].copy()
 
-y_onehot = np.zeros((500, 3))
-for i in range(500):
-    y_onehot[i, int(y[i])] = 1
-trainy = y_onehot[:400, :].copy()
-valy = y_onehot[400:, :].copy()
+w1_0 = np.random.uniform(0., 1., (2, 10))
+w1_0 = np.clip(w1_0, -1, 1)
 
-trainx = x[:400, :].copy()/16
-valx = x[400:, :].copy()/16
+b1_0 = np.random.uniform(0., 1., 10)
+b1_0 = np.clip(b1_0, -1, 1)
+
+w2_0 = np.random.uniform(0., 1., (10, 2))
+w2_0 = np.clip(w2_0, -1, 1)
+w2_0 = w2_0.T
 
 #######################
 # Network parameters  #
 #######################
 
-n, m, k = 26, 10, 3
+n, m, k = 3, 10, 5
 
 batch_size = 40
-num_batches = 10
+num_batches = 20
 num_epochs = 15
-lr = 0.005
-
-np.random.seed(0)
-
-slm_arr = np.random.normal(0, 0.5, (n, m))
-slm_arr = np.clip(slm_arr, -1, 1)
-slm_arr = (slm_arr*64).astype(np.int)/64
-
-slm2_arr = np.random.normal(0, 0.5, (k, m))
-slm2_arr = np.clip(slm2_arr, -1, 1)
-slm2_arr = (slm2_arr*64).astype(np.int)/64
+lr = 0.008
+scaling = 100
 
 today_date = datetime.today().strftime('%Y-%m-%d')
-save_folder = 'D:/ONN_backprop/'+today_date+'/hybrid_digits2/'
-#
-if os.path.exists(save_folder+'NOTES.txt'):
-    print('Folder already exists!')
-    raise RuntimeError
-else:
-    with open(save_folder+'NOTES.txt', mode="w") as f:
-        f.write("OPTICAL TRAINING")
+save_folder = 'D:/ONN_nonlinear/'+today_date+'/digital3/'
+
+# if os.path.exists(save_folder+'NOTES.txt'):
+#     print('Folder already exists!')
+#     raise RuntimeError
+# else:
+#     with open(save_folder+'NOTES.txt', mode="w") as f:
+#         f.write("HYBRID TRAINING")
 
 np.save(save_folder + 'trainx.npy', trainx)
-np.save(save_folder + 'valx.npy', valx)
-# np.save(save_folder + 'testx.npy', testx)
 np.save(save_folder + 'trainy.npy', trainy)
-np.save(save_folder + 'valy.npy', valy)
+# np.save(save_folder + 'testx.npy', testx)
 # np.save(save_folder + 'testy.npy', testy)
+
 testx = None
 testy = None
 
-all_params = (n, m, k, batch_size, num_batches, num_epochs, lr)
+all_params = (n, m, k, batch_size, num_batches, num_epochs, lr, scaling)
 np.save(save_folder + 'all_params.npy', all_params)
 
 #####################
@@ -106,25 +79,28 @@ np.save(save_folder + 'all_params.npy', all_params)
 #####################
 
 onn = MyONN(batch_size=batch_size, num_batches=num_batches, num_epochs=num_epochs,
-            w1_0=slm_arr[1:, :], w2_0=slm2_arr, b1_0=slm_arr[0, :],
-            lr=lr, dimensions=(n, m, k),
+            w1_0=w1_0, w2_0=w2_0, b1_0=b1_0,
+            lr=lr, scaling=scaling, dimensions=(n, m, k),
             save_folder=save_folder,
-            trainx=trainx, valx=valx, testx=testx,
-            trainy=trainy, valy=valy, testy=testy,
-            forward='optical', backward='digital')
+            trainx=trainx, testx=testx, trainy=trainy, testy=testy,
+            forward='digital', backward='digital')
 
+# onn.init_weights()
 
-onn.run_calibration(initial=True)
-onn.init_weights()
-
-# onn.run_validation(99)
+# rng = np.random.default_rng(0)
+# epoch_rand_indxs = np.arange(onn.trainx.shape[0])
+# rng.shuffle(epoch_rand_indxs)
+# onn.batch_indxs_list = [epoch_rand_indxs[i * onn.batch_size: (i + 1) * onn.batch_size]
+#                         for i in range(onn.num_batches)]
+# success = onn.run_batch(0)
+# onn.norm_params2 = onn.ctrl.update_norm_params(onn.theory_z2, onn.meas_z2, onn.norm_params2)
 
 print('Epoch  Loss   Time   Accuracy')
 time.sleep(0.2)
 
 for epoch in range(num_epochs):
 
-    rng = np.random.default_rng(epoch*100)
+    rng = np.random.default_rng(epoch)
     epoch_rand_indxs = np.arange(onn.trainx.shape[0])
     rng.shuffle(epoch_rand_indxs)
     onn.batch_indxs_list = [epoch_rand_indxs[i * onn.batch_size: (i + 1) * onn.batch_size]
@@ -135,42 +111,25 @@ for epoch in range(num_epochs):
                leave=True)
 
     for batch in t:
-        success, err = onn.run_batch(batch)
+
+        success = onn.run_batch(batch)
 
         if success:
+
             onn.save_batch(epoch, batch)
             onn.graph_batch()
             dt = onn.loop_clock.tick()
+
+            acc = f"{onn.accs[-1]:4.1f}" if epoch > 0 else "--.-"
             t.set_description(f"{epoch:2d}"+" "*6+f"{onn.loss[-1]:.3f}"+" "*2+f"{dt:.3f}"
-                              + " "*2+"--.-"+" "*5)
+                              + " "*2+acc+" "*5)
 
-        if batch == num_batches - 1:
+    # if epoch > 3:
+    #     onn.norm_params2 = onn.ctrl.update_norm_params(onn.theory_z2, onn.meas_z2, onn.norm_params2)
 
-            onn.dnn.w1 = onn.best_w1.copy()
-            onn.dnn.w2 = onn.best_w2.copy()
-            onn.dnn.b1 = onn.best_b1.copy()
-            np.save(onn.save_folder+f'validation/best_w1s/w1_epoch{epoch}.npy',
-                    onn.dnn.w1)
-            np.save(onn.save_folder+f'validation/best_b1s/b1_epoch{epoch}.npy',
-                    onn.dnn.b1)
-            np.save(onn.save_folder+f'validation/best_w2s/w2_epoch{epoch}.npy',
-                    onn.dnn.w2)
+    # onn.run_validation(epoch)
 
-            # onn.run_calibration(initial=False)
-
-            # if epoch == num_epochs - 1:
-            #     onn.run_validation(epoch, test_or_val='test')
-
-            onn.run_validation(epoch, test_or_val='val')
-            t.set_description(f"{epoch:2d}"+" "*6+f"{onn.loss[-1]:.3f}"+" "*2+f"{dt:.3f}"
-                              + " "*2+f"{onn.accs[-1]:04.1f}"+" "*5)
-
-    # t1 = time.perf_counter()
-    # epoch_time = t1 - t0
-    #
-    # print('\n######################################################################')
-    # print(colored('epoch {}, time : {}, accuracy : {:.2f}, final loss : {:.2f}'
-    #               .format(epoch, epoch_time, onn.accs[-1], onn.loss[-1]), 'green'))
-    # print('######################################################################\n')
+    onn.run_validation(epoch, grid=True)
 
 print('done')
+input()
