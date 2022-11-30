@@ -361,9 +361,9 @@ class Controller:
 
         if cam == 'z2':
 
-            mask = arrs < 2
-            arrs -= 1
-            arrs[mask] = 0
+            # mask = arrs < 2
+            # arrs -= 1
+            # arrs[mask] = 0
 
             arrs = np.transpose(arrs, (0, 2, 1))
             spots = arrs[:, self.spot_indxs2, self.y_center2-2:self.y_center2+2].copy()
@@ -529,10 +529,18 @@ class Controller:
 
         norm_params_adjust = np.empty((theory.shape[1], 2))
         for j in range(theory.shape[1]):
-            if theory[:, j].std() < 0.5:
-                norm_params_adjust[j, :] = np.array([curve_fit(line_no_c, theory[:, j], measured[:, j])[0], 0.])
-            else:
-                norm_params_adjust[j, :] = curve_fit(line, theory[:, j], measured[:, j])[0]
+
+            # mask = measured[:, j] > 0.05
+
+            # if theory[:, j].std() < 0.5:
+            #     norm_params_adjust[j, :] = np.array([curve_fit(line_no_c, theory[:, j], measured[:, j])[0], 0.])
+            # else:
+
+            # try:
+            norm_params_adjust[j, :] = curve_fit(line, theory[:, j], measured[:, j])[0]
+            # except ValueError:
+            #     norm_params_adjust[j, 0] = 1.
+            #     norm_params_adjust[j, 1] = 0.
 
         # print(norm_params.shape, norm_params.dtype)
         # print(norm_params_adjust.shape,  norm_params_adjust.dtype)

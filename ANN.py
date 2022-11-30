@@ -84,7 +84,7 @@ class DNN_backprop:
 
         dw2 = np.dot(self.a1.T, self.a2_delta)
         dw1 = np.dot(self.xs.T, self.a1_delta)
-        db1 = self.a1_delta.copy().mean(axis=0)
+        db1 = self.a1_delta.copy().sum(axis=0)
 
         adam_dw2, self.m_dw2, self.v_dw2 = self.adam_update(dw2, self.m_dw2, self.v_dw2)
         adam_dw1, self.m_dw1, self.v_dw1 = self.adam_update(dw1, self.m_dw1, self.v_dw1)
